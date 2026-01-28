@@ -215,8 +215,49 @@
                 },
                 {
                   "type": "frame",
+                  "id": "k4M0u",
+                  "name": "Example",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 999,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E7EB"
+                  },
+                  "gap": 6,
+                  "padding": [
+                    6,
+                    10
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon_font",
+                      "id": "a2Qv9",
+                      "name": "exampleIcon",
+                      "width": 16,
+                      "height": 16,
+                      "iconFontName": "zap",
+                      "iconFontFamily": "lucide",
+                      "fill": "#4F46E5"
+                    },
+                    {
+                      "type": "text",
+                      "id": "R1vbt",
+                      "name": "exampleText",
+                      "fill": "#4F46E5",
+                      "content": "一键示例：向老板提加薪",
+                      "fontFamily": "Inter",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "sT4Rt",
                   "name": "Start",
+                  "width": "fill_container",
                   "fill": "#111827",
                   "cornerRadius": 12,
                   "gap": 8,
@@ -246,6 +287,97 @@
                       "iconFontName": "arrow-right",
                       "iconFontFamily": "lucide",
                       "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "b9W2m",
+                  "name": "Quick Options",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "aV3kL",
+                      "name": "Tone",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 999,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "#E5E7EB"
+                      },
+                      "gap": 6,
+                      "padding": [
+                        8,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "p1y7Q",
+                          "name": "toneText",
+                          "fill": "#111827",
+                          "content": "语气：坚定",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon_font",
+                          "id": "o7kQ2",
+                          "name": "toneIcon",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "chevron-down",
+                          "iconFontFamily": "lucide",
+                          "fill": "#6B7280"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "q0B2v",
+                      "name": "Opponent",
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 999,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "#E5E7EB"
+                      },
+                      "gap": 6,
+                      "padding": [
+                        8,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "b5kJt",
+                          "name": "opponentText",
+                          "fill": "#111827",
+                          "content": "对手：强硬",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon_font",
+                          "id": "c8mR1",
+                          "name": "opponentIcon",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "chevron-down",
+                          "iconFontFamily": "lucide",
+                          "fill": "#6B7280"
+                        }
+                      ]
                     }
                   ]
                 },
