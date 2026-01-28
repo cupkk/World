@@ -128,6 +128,172 @@
                 },
                 {
                   "type": "frame",
+                  "id": "S3pTh",
+                  "name": "3-Step",
+                  "fill": "#F9FAFB",
+                  "cornerRadius": 12,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E7EB"
+                  },
+                  "padding": [
+                    8,
+                    12
+                  ],
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "stp01",
+                      "name": "Step 1",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n1BdG",
+                          "name": "1",
+                          "width": 18,
+                          "height": 18,
+                          "fill": "#111827",
+                          "cornerRadius": 999,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n1Txt",
+                              "name": "num1",
+                              "fill": "#FFFFFF",
+                              "content": "1",
+                              "fontFamily": "Inter",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "s1TxT",
+                          "name": "step1Text",
+                          "fill": "#111827",
+                          "content": "一句话描述目标",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon_font",
+                      "id": "Arr01",
+                      "name": "arrow1",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "arrow-right",
+                      "iconFontFamily": "lucide",
+                      "fill": "#9CA3AF"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "stp02",
+                      "name": "Step 2",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n2BdG",
+                          "name": "2",
+                          "width": 18,
+                          "height": 18,
+                          "fill": "#111827",
+                          "cornerRadius": 999,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n2Txt",
+                              "name": "num2",
+                              "fill": "#FFFFFF",
+                              "content": "2",
+                              "fontFamily": "Inter",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "s2TxT",
+                          "name": "step2Text",
+                          "fill": "#111827",
+                          "content": "可选：选语气/对手",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon_font",
+                      "id": "Arr02",
+                      "name": "arrow2",
+                      "width": 14,
+                      "height": 14,
+                      "iconFontName": "arrow-right",
+                      "iconFontFamily": "lucide",
+                      "fill": "#9CA3AF"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "stp03",
+                      "name": "Step 3",
+                      "gap": 6,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "n3BdG",
+                          "name": "3",
+                          "width": 18,
+                          "height": 18,
+                          "fill": "#111827",
+                          "cornerRadius": 999,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n3Txt",
+                              "name": "num3",
+                              "fill": "#FFFFFF",
+                              "content": "3",
+                              "fontFamily": "Inter",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "s3TxT",
+                          "name": "step3Text",
+                          "fill": "#111827",
+                          "content": "生成可复制/可导出卡片",
+                          "fontFamily": "Inter",
+                          "fontSize": 12,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "089Kj",
                   "name": "Prompt Input",
                   "width": "fill_container",
@@ -2781,7 +2947,7 @@
                           "type": "frame",
                           "id": "gZH6Y",
                           "name": "Content",
-                          "width": "fill_container",
+                          "width": 544,
                           "layout": "vertical",
                           "gap": 16,
                           "children": [
@@ -2789,7 +2955,7 @@
                               "type": "frame",
                               "id": "e8ec3",
                               "name": "Meta",
-                              "width": "fill_container",
+                              "width": 544,
                               "justifyContent": "space_between",
                               "alignItems": "center",
                               "children": [
@@ -2829,7 +2995,7 @@
                               "type": "frame",
                               "id": "v5o3e",
                               "name": "Tags",
-                              "width": "fill_container",
+                              "width": 544,
                               "gap": 8,
                               "alignItems": "center",
                               "children": [
@@ -2898,14 +3064,14 @@
                               "id": "gVhFh",
                               "name": "div",
                               "fill": "#E5E7EB",
-                              "width": "fill_container",
+                              "width": 544,
                               "height": 1
                             },
                             {
                               "type": "frame",
                               "id": "fjszT",
                               "name": "Section",
-                              "width": "fill_container",
+                              "width": 544,
                               "layout": "vertical",
                               "gap": 6,
                               "children": [
@@ -2935,7 +3101,7 @@
                               "type": "frame",
                               "id": "kRh79",
                               "name": "Section",
-                              "width": "fill_container",
+                              "width": 544,
                               "layout": "vertical",
                               "gap": 6,
                               "children": [
@@ -2966,7 +3132,7 @@
                               "type": "frame",
                               "id": "Hbzuo",
                               "name": "Section",
-                              "width": "fill_container",
+                              "width": 544,
                               "layout": "vertical",
                               "gap": 6,
                               "children": [
@@ -2999,7 +3165,7 @@
                           "type": "frame",
                           "id": "65e9t",
                           "name": "Footer",
-                          "width": "fill_container",
+                          "width": 544,
                           "layout": "vertical",
                           "gap": 10,
                           "children": [
@@ -3008,7 +3174,7 @@
                               "id": "cmxPP",
                               "name": "footDiv",
                               "fill": "#E5E7EB",
-                              "width": "fill_container",
+                              "width": 544,
                               "height": 1
                             },
                             {
@@ -3167,7 +3333,7 @@
           "type": "frame",
           "id": "sQT2u",
           "name": "Content",
-          "width": "fill_container",
+          "width": 936,
           "layout": "vertical",
           "gap": 24,
           "children": [
@@ -3175,7 +3341,7 @@
               "type": "frame",
               "id": "h0ZwA",
               "name": "Meta",
-              "width": "fill_container",
+              "width": 936,
               "justifyContent": "space_between",
               "alignItems": "center",
               "children": [
@@ -3215,7 +3381,7 @@
               "type": "frame",
               "id": "rtOo1",
               "name": "Tags",
-              "width": "fill_container",
+              "width": 936,
               "gap": 12,
               "alignItems": "center",
               "children": [
@@ -3284,14 +3450,14 @@
               "id": "d5JaV",
               "name": "div",
               "fill": "#E5E7EB",
-              "width": "fill_container",
+              "width": 936,
               "height": 2
             },
             {
               "type": "frame",
               "id": "ynZ7o",
               "name": "Section",
-              "width": "fill_container",
+              "width": 936,
               "layout": "vertical",
               "gap": 10,
               "children": [
@@ -3322,7 +3488,7 @@
               "type": "frame",
               "id": "eHWRX",
               "name": "Section",
-              "width": "fill_container",
+              "width": 936,
               "layout": "vertical",
               "gap": 10,
               "children": [
@@ -3353,7 +3519,7 @@
               "type": "frame",
               "id": "MUmxL",
               "name": "Section",
-              "width": "fill_container",
+              "width": 936,
               "layout": "vertical",
               "gap": 10,
               "children": [
@@ -3386,7 +3552,7 @@
           "type": "frame",
           "id": "w3icR",
           "name": "Footer",
-          "width": "fill_container",
+          "width": 936,
           "layout": "vertical",
           "gap": 16,
           "children": [
@@ -3395,7 +3561,7 @@
               "id": "YKeKr",
               "name": "footDiv",
               "fill": "#E5E7EB",
-              "width": "fill_container",
+              "width": 936,
               "height": 2
             },
             {
