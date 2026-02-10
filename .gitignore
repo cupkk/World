@@ -6,3 +6,9 @@ dist
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+.env
+.env.*
+server/.env
+server/.env.*
+!.env.example
+!server/.env.example

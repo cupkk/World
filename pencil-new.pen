@@ -1,5 +1,5 @@
 {
-  "version": "2.6",
+  "version": "2.7",
   "children": [
     {
       "type": "frame",
@@ -11,7 +11,6 @@
       "width": 1440,
       "height": 900,
       "fill": "#FFFFFF",
-      "placeholder": true,
       "layout": "vertical",
       "children": [
         {
@@ -84,7 +83,8 @@
                   "fill": "#6B7280",
                   "content": "一句话描述目标，我会帮你推演成可执行的策略与话术。",
                   "fontFamily": "Inter",
-                  "fontSize": 16
+                  "fontSize": 16,
+                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
@@ -97,11 +97,11 @@
                     "thickness": 1,
                     "fill": "#C7D2FE"
                   },
+                  "gap": 6,
                   "padding": [
                     6,
                     10
                   ],
-                  "gap": 6,
                   "alignItems": "center",
                   "children": [
                     {
@@ -137,11 +137,11 @@
                     "thickness": 1,
                     "fill": "#E5E7EB"
                   },
+                  "gap": 10,
                   "padding": [
                     8,
                     12
                   ],
-                  "gap": 10,
                   "alignItems": "center",
                   "children": [
                     {
@@ -337,7 +337,8 @@
                           "fill": "#6B7280",
                           "content": "例如：向老板提加薪",
                           "fontFamily": "Inter",
-                          "fontSize": 16
+                          "fontSize": 16,
+                          "fontWeight": "normal"
                         }
                       ]
                     },
@@ -371,7 +372,8 @@
                               "fill": "#6B7280",
                               "content": "Enter ↵ 开始",
                               "fontFamily": "Inter",
-                              "fontSize": 12
+                              "fontSize": 12,
+                              "fontWeight": "normal"
                             }
                           ]
                         }
@@ -687,7 +689,8 @@
                   "fill": "#9CA3AF",
                   "content": "提示：你可以粘贴对方的原话/邮件，我会以批注方式帮你优化。",
                   "fontFamily": "Inter",
-                  "fontSize": 13
+                  "fontSize": 13,
+                  "fontWeight": "normal"
                 }
               ]
             }
@@ -705,7 +708,6 @@
       "width": 1440,
       "height": 900,
       "fill": "#F9FAFB",
-      "placeholder": true,
       "layout": "vertical",
       "children": [
         {
@@ -957,8 +959,8 @@
           "type": "frame",
           "id": "J0caW",
           "name": "Body",
-          "width": "fill_container",
-          "height": "fill_container",
+          "width": 1440,
+          "height": 835,
           "gap": 24,
           "padding": 24,
           "children": [
@@ -2252,7 +2254,6 @@
       "width": 1440,
       "height": 900,
       "fill": "#F9FAFB",
-      "placeholder": true,
       "layout": "none",
       "children": [
         {
@@ -2264,7 +2265,6 @@
           "width": 1440,
           "height": 900,
           "fill": "#00000000",
-          "placeholder": true,
           "layout": "vertical",
           "children": [
             {
