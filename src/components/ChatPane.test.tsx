@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import ChatPane from "./ChatPane";
 import type { ChatMessage } from "../types/workspace";
@@ -115,33 +115,37 @@ describe("ChatPane", () => {
     expect(onPinToBoard).toHaveBeenCalledWith("assistant-1");
   });
 
-  it("sends quick option when assistant provides choices", () => {
+  it("fills input when text quick option is selected", () => {
     const onSendMessage = vi.fn();
     render(
       <ChatPane
-        messages={[
-          assistantMessage("你更希望哪种方向？\nA. 先给提纲\nB. 先写摘要\nC. 先列风险")
-        ]}
+        messages={[assistantMessage("Choose one:\nA. Start with outline\nB. Start with summary\nC. Start with risks")]}
         isAiTyping={false}
         onSendMessage={onSendMessage}
         onPinToBoard={vi.fn()}
       />
     );
 
-    fireEvent.click(screen.getByText("A. 先给提纲"));
-    expect(onSendMessage).toHaveBeenCalledWith("先给提纲");
+    fireEvent.click(screen.getByText("A. Start with outline"));
+
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("Start with outline");
+    expect(onSendMessage).not.toHaveBeenCalled();
   });
 
-  it("prefers structured next_questions options", () => {
+  it("supports grouped structured answers and batch send", () => {
     const onSendMessage = vi.fn();
     render(
       <ChatPane
         messages={[
-          assistantMessage("下面我给你几个方向。", {
+          assistantMessage("Let's clarify in groups.", {
             nextQuestions: [
               {
-                question: "你希望先补哪一部分？",
-                options: ["目标用户", "关键约束", "交付截止时间"]
+                question: "What is your primary goal?",
+                options: ["Improve conversion", "Reduce support workload", "Validate a new idea"]
+              },
+              {
+                question: "What deliverable do you need first?",
+                options: ["Plan document", "Prototype draft", "Milestone checklist"]
               }
             ]
           })
@@ -152,19 +156,27 @@ describe("ChatPane", () => {
       />
     );
 
-    fireEvent.click(screen.getByText("A. 目标用户"));
-    expect(onSendMessage).toHaveBeenCalledWith("目标用户");
+    fireEvent.click(screen.getByText("A. Improve conversion"));
+    fireEvent.click(screen.getByText("A. Plan document"));
+    fireEvent.click(screen.getByRole("button", { name: "一键发送回答" }));
+
+    expect(onSendMessage).toHaveBeenCalledTimes(1);
+    const payload = String(onSendMessage.mock.calls[0]?.[0] ?? "");
+    expect(payload).toContain("What is your primary goal?");
+    expect(payload).toContain("Improve conversion");
+    expect(payload).toContain("What deliverable do you need first?");
+    expect(payload).toContain("Plan document");
   });
 
   it("removes duplicated option prefixes in structured options", () => {
     render(
       <ChatPane
         messages={[
-          assistantMessage("继续澄清：", {
+          assistantMessage("continue", {
             nextQuestions: [
               {
-                question: "请补充信息",
-                options: ["A. 你的目标受众是谁？", "B. 你希望何时完成？"]
+                question: "Please complete this:",
+                options: ["A. Who is the target audience?", "B. What is the timeline?"]
               }
             ]
           })
@@ -175,11 +187,11 @@ describe("ChatPane", () => {
       />
     );
 
-    expect(screen.getByText("A. 你的目标受众是谁？")).toBeTruthy();
+    expect(screen.getByText("A. Who is the target audience?")).toBeTruthy();
     expect(screen.queryByText(/A\.\s*A\./)).toBeNull();
   });
 
-  it("uses globally increasing labels across multiple structured questions", () => {
+  it("restarts option labels per question group", () => {
     render(
       <ChatPane
         messages={[
@@ -204,8 +216,8 @@ describe("ChatPane", () => {
 
     expect(screen.getByText("A. goal")).toBeTruthy();
     expect(screen.getByText("B. audience")).toBeTruthy();
-    expect(screen.getByText("C. timeline")).toBeTruthy();
-    expect(screen.getByText("D. risk")).toBeTruthy();
+    expect(screen.getByText("A. timeline")).toBeTruthy();
+    expect(screen.getByText("B. risk")).toBeTruthy();
   });
 
   it("falls back to parsing assistant text when structured options are placeholder letters only", () => {
@@ -213,11 +225,11 @@ describe("ChatPane", () => {
       <ChatPane
         messages={[
           assistantMessage(
-            "1. 您希望这次讨论或项目的主要产出是什么？\nA. 一份具体的计划或方案\nB. 一个决策或建议\nC. 一个创意或概念\nD. 其他（请补充）",
+            "1. What is the expected output?\nA. Plan document\nB. Decision memo\nC. Concept draft\nD. Other",
             {
               nextQuestions: [
                 {
-                  question: "您希望这次讨论或项目的主要产出是什么？",
+                  question: "What is the expected output?",
                   options: ["A", "B", "C", "D"]
                 }
               ]
@@ -230,20 +242,82 @@ describe("ChatPane", () => {
       />
     );
 
-    expect(screen.getByText("A. 一份具体的计划或方案")).toBeTruthy();
-    expect(screen.getByText("B. 一个决策或建议")).toBeTruthy();
+    expect(screen.getByText("A. Plan document")).toBeTruthy();
+    expect(screen.getByText("B. Decision memo")).toBeTruthy();
     expect(screen.queryByText("A. A")).toBeNull();
+  });
+
+  it("uses message parsed question groups when structured data only contains first question", () => {
+    render(
+      <ChatPane
+        messages={[
+          assistantMessage(
+            "1. What should be the focus?\nA. Keep current scope\nB. Add one advanced module\n2. What deliverable do you prefer?\nA. Weekly checklist\nB. Learning roadmap",
+            {
+              nextQuestions: [
+                {
+                  question: "What should be the focus?",
+                  options: ["A. Keep current scope"]
+                }
+              ]
+            }
+          )
+        ]}
+        isAiTyping={false}
+        onSendMessage={vi.fn()}
+        onPinToBoard={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(/已选择 0\/2/)).toBeTruthy();
+    expect(screen.getByText("A. Keep current scope")).toBeTruthy();
+    expect(screen.getByText("B. Add one advanced module")).toBeTruthy();
+    expect(screen.getByText("A. Weekly checklist")).toBeTruthy();
+    expect(screen.getByText("B. Learning roadmap")).toBeTruthy();
+  });
+
+  it("builds options for each numbered question when message includes a summary option block", () => {
+    render(
+      <ChatPane
+        messages={[
+          assistantMessage(
+            "好的，我先问三个关键问题来帮你澄清目标。\n1. 你希望解决什么问题或达成什么目标？\n2. 这个项目或任务的主要受众是谁？\n3. 你期望的输出形式是什么（例如文档、计划、代码等）？\n你可参考以下选项回答：\n1. 请回答以上问题，以便我更好地协助你。\nA. 解决一个具体业务问题\nB. 制定个人学习计划\nC. 设计一个产品原型\nD. 其他（请补充）",
+            {
+              nextQuestions: [
+                {
+                  question: "请回答以上问题，以便我更好地协助你。",
+                  options: ["A. 解决一个具体业务问题"]
+                }
+              ]
+            }
+          )
+        ]}
+        isAiTyping={false}
+        onSendMessage={vi.fn()}
+        onPinToBoard={vi.fn()}
+      />
+    );
+
+    const panel = screen.getByLabelText("分问题回答面板");
+    const panelScope = within(panel);
+    expect(panelScope.getByText(/已选择 0\/3/)).toBeTruthy();
+    expect(panelScope.getByText(/1\. 你希望解决什么问题或达成什么目标/)).toBeTruthy();
+    expect(panelScope.getByText(/2\. 这个项目或任务的主要受众是谁/)).toBeTruthy();
+    expect(panelScope.getByText(/3\. 你期望的输出形式是什么/)).toBeTruthy();
+    expect(panelScope.getByText("A. 提升业务指标")).toBeTruthy();
+    expect(panelScope.getByText("A. B端企业角色")).toBeTruthy();
+    expect(panelScope.getByText("A. 文档方案")).toBeTruthy();
   });
 
   it("renders margin notes for assistant message", () => {
     render(
       <ChatPane
         messages={[
-          assistantMessage("这是本轮建议。", {
+          assistantMessage("Suggestions", {
             marginNotes: [
               {
-                comment: "开场白还可以更具体",
-                suggestion: "补一句可量化目标"
+                comment: "Make the opening paragraph more specific",
+                suggestion: "Add one measurable target"
               }
             ]
           })
@@ -255,7 +329,7 @@ describe("ChatPane", () => {
     );
 
     expect(screen.getByText("批注建议")).toBeTruthy();
-    expect(screen.getByText("开场白还可以更具体")).toBeTruthy();
+    expect(screen.getByText("Make the opening paragraph more specific")).toBeTruthy();
   });
 
   it("triggers margin note accept and undo callbacks", () => {
@@ -265,15 +339,15 @@ describe("ChatPane", () => {
     render(
       <ChatPane
         messages={[
-          assistantMessage("建议如下：", {
+          assistantMessage("Suggestions", {
             marginNotes: [
               {
-                comment: "把目标写得更清晰",
-                suggestion: "补充量化目标"
+                comment: "Clarify target",
+                suggestion: "Add measurable KPI"
               },
               {
-                comment: "已处理建议",
-                suggestion: "保留结果段",
+                comment: "Already applied",
+                suggestion: "Keep current version",
                 accepted: true
               }
             ]
@@ -328,11 +402,11 @@ describe("ChatPane", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
 
     FakeSpeechRecognition.latest?.onresult?.({
-      results: [{ 0: { transcript: "语音内容" } }]
+      results: [{ 0: { transcript: "voice draft" } }]
     });
 
     await waitFor(() => {
-      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("语音内容");
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("voice draft");
     });
   });
 

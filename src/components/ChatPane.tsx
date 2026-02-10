@@ -16,6 +16,12 @@ type AssistantOption = {
   content: string;
 };
 
+type AssistantQuestionGroup = {
+  key: string;
+  question: string;
+  options: AssistantOption[];
+};
+
 type SpeechRecognitionAlternativeLike = {
   transcript: string;
 };
@@ -58,6 +64,7 @@ interface ChatPaneProps {
 const TYPING_SCROLL_INTERVAL_MS = 180;
 const OPTION_LINE_PATTERN = /^\s*(?:[-*]\s*)?([A-Da-d]|[1-4])[\.、:：)\-]\s*(.+)$/;
 const OPTION_PREFIX_PATTERN = /^\s*(?:[-*]\s*)?(?:[A-Da-d]|[1-4])[\.、:：)\-]\s*/;
+const QUESTION_LINE_PATTERN = /^\s*(\d+)\s*[.)、．:：]\s*(.+)$/;
 
 function getSpeechRecognitionCtor() {
   const speechWindow = window as Window & {
@@ -82,61 +89,193 @@ function buildOptionLabelByIndex(index: number) {
   return `${index + 1}`;
 }
 
-function buildQuickOptionsFromStructured(message: ChatMessage): AssistantOption[] {
+function getLatestAssistantMessage(messages: ChatMessage[]) {
+  return [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && (message.content.trim() || (message.nextQuestions?.length ?? 0) > 0));
+}
+
+function buildQuestionGroupsFromStructured(message: ChatMessage): AssistantQuestionGroup[] {
   const questions = message.nextQuestions ?? [];
   if (!questions.length) return [];
 
-  const options: AssistantOption[] = [];
-  const seen = new Set<string>();
+  const groups: AssistantQuestionGroup[] = [];
+  const seenQuestions = new Set<string>();
 
   questions.forEach((questionItem, questionIndex) => {
     const question = questionItem.question?.trim();
-    const candidates = (questionItem.options ?? []).map((value) => value.trim()).filter(Boolean);
+    if (!question) return;
+    const questionKey = question.toLowerCase();
+    if (seenQuestions.has(questionKey)) return;
+    seenQuestions.add(questionKey);
 
-    if (candidates.length > 0) {
-      candidates.forEach((optionText, optionIndex) => {
+    const seenOptions = new Set<string>();
+    const options: AssistantOption[] = [];
+    (questionItem.options ?? [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach((optionText, optionIndex) => {
         const normalized = stripOptionPrefix(optionText);
         if (!normalized) return;
         if (isPlaceholderStructuredOption(normalized)) return;
-        const key = normalized.toLowerCase();
-        if (seen.has(key)) return;
-        seen.add(key);
-        const optionLabel = buildOptionLabelByIndex(options.length);
+
+        const optionKey = normalized.toLowerCase();
+        if (seenOptions.has(optionKey)) return;
+        seenOptions.add(optionKey);
+
+        const optionLabel = buildOptionLabelByIndex(optionIndex);
         options.push({
-          key: `structured-${questionIndex}-${optionIndex}-${optionLabel}`,
+          key: `structured-${questionIndex}-${optionIndex}`,
           label: `${optionLabel}. ${normalized}`,
           content: normalized
         });
       });
-      return;
-    }
 
-    if (!question) return;
-    const key = question.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    options.push({
-      key: `structured-${questionIndex}`,
-      label: question,
-      content: question
+    if (!options.length) return;
+    groups.push({
+      key: `question-${questionIndex}`,
+      question,
+      options
     });
   });
 
-  return options.slice(0, 6);
+  return groups;
 }
 
-function buildQuickOptions(messages: ChatMessage[]): AssistantOption[] {
-  const latestAssistant = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && (message.content.trim() || (message.nextQuestions?.length ?? 0) > 0));
-  if (!latestAssistant) return [];
+function normalizeQuestionText(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
 
-  const structuredOptions = buildQuickOptionsFromStructured(latestAssistant);
-  if (structuredOptions.length > 0) return structuredOptions;
+function isMetaSummaryQuestion(value: string) {
+  return /(请回答以上问题|请简要回答|以上问题|回答这三|回答上述)/.test(value);
+}
 
+function buildFallbackOptionsForQuestion(question: string): string[] {
+  const q = question.toLowerCase();
+  if (/(核心|问题|需求|痛点|目标|解决)/.test(q)) {
+    return ["提升业务指标", "解决流程效率", "验证想法可行性", "其他（请补充）"];
+  }
+  if (/(用户|受众|对象|人群|面向|stakeholder|audience|user)/.test(q)) {
+    return ["B端企业角色", "C端个人用户", "内部协作团队", "其他（请补充）"];
+  }
+  if (/(成果|结果|输出|产出|交付|形式|deliverable|output)/.test(q)) {
+    return ["文档方案", "结构化清单", "可执行产物", "其他（请补充）"];
+  }
+  if (/(时间|周期|截止|优先级|timeline|deadline|priority)/.test(q)) {
+    return ["1个月内可完成", "3个月分阶段推进", "6个月长期规划", "其他（请补充）"];
+  }
+  if (/(资源|预算|限制|约束|风险|resource|budget|constraint|risk)/.test(q)) {
+    return ["预算可控", "时间受限", "人力受限", "其他（请补充）"];
+  }
+  return ["先做方案框架", "先明确关键约束", "先定义成功标准", "其他（请补充）"];
+}
+
+function buildQuestionGroupsFromMessage(message: ChatMessage): AssistantQuestionGroup[] {
+  const lines = message.content
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+
+  const blocks: Array<{ question: string; options: string[] }> = [];
+  let current: { question: string; options: string[] } | null = null;
+  let hasExplicitQuestion = false;
+
+  for (const line of lines) {
+    const questionMatch = line.match(QUESTION_LINE_PATTERN);
+    if (questionMatch) {
+      hasExplicitQuestion = true;
+      if (current?.question) {
+        blocks.push(current);
+      }
+      current = {
+        question: normalizeQuestionText(questionMatch[2] ?? ""),
+        options: []
+      };
+      continue;
+    }
+
+    const optionMatch = line.match(OPTION_LINE_PATTERN);
+    if (optionMatch) {
+      if (!current) continue;
+      current.options.push(stripOptionPrefix(optionMatch[2] ?? ""));
+      continue;
+    }
+
+    if (!current) continue;
+    if (current.options.length === 0) {
+      current.question = normalizeQuestionText(`${current.question} ${line}`);
+      continue;
+    }
+    const lastOptionIndex = current.options.length - 1;
+    current.options[lastOptionIndex] = normalizeQuestionText(`${current.options[lastOptionIndex]} ${line}`);
+  }
+
+  if (current?.question) {
+    blocks.push(current);
+  }
+  if (!hasExplicitQuestion) return [];
+
+  const substantiveBlocks = blocks.filter((block) => !isMetaSummaryQuestion(block.question));
+  const hasMultiSubstantiveQuestions = substantiveBlocks.length >= 2;
+  const hasMetaSummaryWithOptions = blocks.some(
+    (block) => isMetaSummaryQuestion(block.question) && block.options.length >= 2
+  );
+  const normalizedBlocks =
+    hasMultiSubstantiveQuestions && hasMetaSummaryWithOptions ? substantiveBlocks : blocks;
+
+  const groups: AssistantQuestionGroup[] = [];
+  normalizedBlocks.forEach((block, blockIndex) => {
+    const optionSource = block.options.length > 0 ? block.options : buildFallbackOptionsForQuestion(block.question);
+    const seen = new Set<string>();
+    const options: AssistantOption[] = [];
+    optionSource.forEach((rawOption, optionIndex) => {
+      const normalized = stripOptionPrefix(rawOption);
+      if (!normalized) return;
+      if (isPlaceholderStructuredOption(normalized)) return;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      options.push({
+        key: `message-${blockIndex}-${optionIndex}`,
+        label: `${buildOptionLabelByIndex(optionIndex)}. ${normalized}`,
+        content: normalized
+      });
+    });
+
+    if (!block.question || options.length === 0) return;
+    groups.push({
+      key: `message-question-${blockIndex}`,
+      question: block.question,
+      options
+    });
+  });
+
+  return groups;
+}
+
+function pickBestQuestionGroups(message: ChatMessage): AssistantQuestionGroup[] {
+  const structured = buildQuestionGroupsFromStructured(message);
+  const fromMessage = buildQuestionGroupsFromMessage(message);
+
+  if (structured.length === 0) return fromMessage;
+  if (fromMessage.length === 0) return structured;
+
+  const structuredOptionCount = structured.reduce((acc, group) => acc + group.options.length, 0);
+  const messageOptionCount = fromMessage.reduce((acc, group) => acc + group.options.length, 0);
+  const structuredHasThinGroup = structured.some((group) => group.options.length <= 1);
+
+  if (fromMessage.length > structured.length) return fromMessage;
+  if (fromMessage.length >= structured.length && messageOptionCount > structuredOptionCount) return fromMessage;
+  if (structuredHasThinGroup && messageOptionCount >= structuredOptionCount) return fromMessage;
+
+  return structured;
+}
+
+function buildQuickOptionsFromMessage(message: ChatMessage): AssistantOption[] {
   const seen = new Set<string>();
   const options: AssistantOption[] = [];
-  for (const line of latestAssistant.content.split(/\n+/)) {
+  for (const line of message.content.split(/\n+/)) {
     const match = line.match(OPTION_LINE_PATTERN);
     if (!match) continue;
     const optionText = match[2]?.trim();
@@ -151,11 +290,31 @@ function buildQuickOptions(messages: ChatMessage[]): AssistantOption[] {
       label: `${String(match[1]).toUpperCase()}. ${optionText}`,
       content: optionText
     });
-
-    if (options.length >= 4) break;
   }
 
   return options;
+}
+
+function appendToInputDraft(prev: string, value: string) {
+  const incoming = value.trim();
+  if (!incoming) return prev;
+
+  const current = prev.trim();
+  if (!current) return incoming;
+  if (current.includes(incoming)) return prev;
+
+  return `${current}\n${incoming}`;
+}
+
+function buildSelectedAnswersDraft(questionGroups: AssistantQuestionGroup[], selectedByQuestion: Record<string, string>) {
+  const lines: string[] = [];
+  questionGroups.forEach((group, index) => {
+    const answer = selectedByQuestion[group.key];
+    if (!answer) return;
+    lines.push(`${index + 1}. ${group.question}`);
+    lines.push(`- ${answer}`);
+  });
+  return lines.join("\n");
 }
 
 function appendTranscript(prev: string, transcript: string) {
@@ -295,7 +454,23 @@ const ChatPane = memo(function ChatPane({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const quickOptions = useMemo(() => buildQuickOptions(messages), [messages]);
+  const [selectedQuestionAnswers, setSelectedQuestionAnswers] = useState<Record<string, string>>({});
+  const latestAssistant = useMemo(() => getLatestAssistantMessage(messages), [messages]);
+  const questionGroups = useMemo(() => (latestAssistant ? pickBestQuestionGroups(latestAssistant) : []), [latestAssistant]);
+  const quickOptions = useMemo(() => {
+    if (!latestAssistant) return [];
+    if (questionGroups.length > 0) return [];
+    return buildQuickOptionsFromMessage(latestAssistant);
+  }, [latestAssistant, questionGroups.length]);
+  const questionPanelMessageId = questionGroups.length > 0 ? latestAssistant?.id ?? "" : "";
+  const selectedQuestionCount = useMemo(
+    () => questionGroups.filter((group) => Boolean(selectedQuestionAnswers[group.key])).length,
+    [questionGroups, selectedQuestionAnswers]
+  );
+  const selectedProgressPercent = useMemo(() => {
+    if (questionGroups.length === 0) return 0;
+    return Math.round((selectedQuestionCount / questionGroups.length) * 100);
+  }, [questionGroups.length, selectedQuestionCount]);
 
   useEffect(() => {
     setSpeechSupported(Boolean(getSpeechRecognitionCtor()));
@@ -340,6 +515,10 @@ const ChatPane = memo(function ChatPane({
       }
     };
   }, []);
+
+  useEffect(() => {
+    setSelectedQuestionAnswers({});
+  }, [questionPanelMessageId]);
 
   const stopVoiceInput = useCallback(() => {
     try {
@@ -413,11 +592,56 @@ const ChatPane = memo(function ChatPane({
   const handleOptionSelect = useCallback(
     (option: AssistantOption) => {
       if (isAiTyping) return;
-      onSendMessage(option.content);
-      setInputValue("");
+      setInputValue((prev) => appendToInputDraft(prev, option.content));
+      window.requestAnimationFrame(() => inputRef.current?.focus());
     },
-    [isAiTyping, onSendMessage]
+    [isAiTyping]
   );
+
+  const handleQuestionOptionToggle = useCallback(
+    (groupKey: string, optionContent: string) => {
+      if (isAiTyping) return;
+      setSelectedQuestionAnswers((prev) => {
+        const current = prev[groupKey];
+        if (current === optionContent) {
+          const next = { ...prev };
+          delete next[groupKey];
+          return next;
+        }
+        return {
+          ...prev,
+          [groupKey]: optionContent
+        };
+      });
+    },
+    [isAiTyping]
+  );
+
+  const handleInsertSelectedAnswers = useCallback(() => {
+    if (isAiTyping) return;
+    const draft = buildSelectedAnswersDraft(questionGroups, selectedQuestionAnswers);
+    if (!draft) return;
+    setInputValue((prev) => appendToInputDraft(prev, draft));
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, [isAiTyping, questionGroups, selectedQuestionAnswers]);
+
+  const handleSendSelectedAnswers = useCallback(() => {
+    if (isAiTyping) return;
+    const draft = buildSelectedAnswersDraft(questionGroups, selectedQuestionAnswers);
+    if (!draft) return;
+    if (isListening) {
+      stopVoiceInput();
+    }
+    onSendMessage(draft);
+    setInputValue("");
+    setSelectedQuestionAnswers({});
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, [isAiTyping, isListening, onSendMessage, questionGroups, selectedQuestionAnswers, stopVoiceInput]);
+
+  const handleClearSelectedAnswers = useCallback(() => {
+    setSelectedQuestionAnswers({});
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   return (
     <div className="flex h-full flex-col bg-transparent">
@@ -507,6 +731,95 @@ const ChatPane = memo(function ChatPane({
               {hint.actionLabel}
             </button>
           </div>
+        ) : null}
+
+        {questionGroups.length > 0 ? (
+          <section
+            className="mb-2 rounded-[20px] border border-[color:rgba(17,24,39,0.08)] bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(247,248,250,0.94)_100%)] p-3 shadow-soft"
+            aria-label="分问题回答面板"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[13px] font-semibold text-primary">
+                  <Sparkles className="h-3.5 w-3.5 text-[var(--accent-brand)]" />
+                  按问题选择后，可一次性回答多个问题
+                </div>
+                <div className="mt-0.5 text-[11px] text-secondary">每题单选，跨题可多选；可先填入输入框再编辑</div>
+              </div>
+              <div className="shrink-0 rounded-full border border-subtle bg-[var(--bg-surface)] px-2.5 py-1 text-[11px] font-medium text-secondary">
+                已选择 {selectedQuestionCount}/{questionGroups.length}
+              </div>
+            </div>
+
+            <div className="mt-2 h-1.5 rounded-full bg-[var(--bg-subtle)]" aria-hidden="true">
+              <div
+                className="h-full rounded-full bg-[var(--accent-brand)] transition-all duration-300 ease-out"
+                style={{ width: `${selectedProgressPercent}%` }}
+              />
+            </div>
+
+            <div className="mt-3 max-h-56 space-y-2.5 overflow-y-auto pr-1">
+              {questionGroups.map((group, questionIndex) => (
+                <fieldset
+                  key={group.key}
+                  className="rounded-2xl border border-subtle bg-[var(--bg-surface)] px-3 pb-3 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]"
+                >
+                  <legend className="px-1 text-[13px] font-semibold text-primary">
+                    {questionIndex + 1}. {group.question}
+                  </legend>
+                  <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label={`问题 ${questionIndex + 1} 选项`}>
+                    {group.options.map((option) => {
+                      const selected = selectedQuestionAnswers[group.key] === option.content;
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => handleQuestionOptionToggle(group.key, option.content)}
+                          disabled={isAiTyping}
+                          aria-pressed={selected}
+                          className={`rounded-full border px-3 py-1.5 text-[12px] font-medium transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-50 ${
+                            selected
+                              ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white shadow-[0_6px_14px_rgba(17,24,39,0.22)]"
+                              : "border-subtle bg-[var(--bg-surface)] text-secondary hover:-translate-y-[1px] hover:border-[var(--border-strong)] hover:bg-white"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-subtle pt-2.5" role="group" aria-label="分问题回答操作">
+              <button
+                type="button"
+                onClick={handleInsertSelectedAnswers}
+                disabled={selectedQuestionCount === 0 || isAiTyping}
+                className="rounded-full border border-subtle bg-[var(--bg-surface)] px-3.5 py-1.5 text-[12px] font-medium text-secondary transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                填入输入框
+              </button>
+              <button
+                type="button"
+                onClick={handleSendSelectedAnswers}
+                disabled={selectedQuestionCount === 0 || isAiTyping}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent-strong)] bg-[var(--accent-strong)] px-3.5 py-1.5 text-[12px] font-semibold text-white transition hover:bg-[var(--accent-strong-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:border-subtle disabled:bg-[var(--bg-subtle)] disabled:text-muted"
+              >
+                <Send className="h-3.5 w-3.5" />
+                一键发送回答
+              </button>
+              <button
+                type="button"
+                onClick={handleClearSelectedAnswers}
+                disabled={selectedQuestionCount === 0}
+                className="rounded-full border border-transparent bg-transparent px-3 py-1.5 text-[12px] text-secondary transition hover:border-subtle hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                清空选择
+              </button>
+            </div>
+          </section>
         ) : null}
 
         {quickOptions.length > 0 ? (
