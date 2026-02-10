@@ -1,9 +1,0 @@
-{
-    "cursor.general.disableHttp2": false,
-    "gitlens.proxy": {
-
-        
-
-    },
-    "cursor.general.disableHttp1SSE": false
-}

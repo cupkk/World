@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunRequest } from "../../server/src/agentProtocol";
-import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../../server/src/agentPrompt";
-import { loadConfig } from "../../server/src/config";
-import { callDeepSeekJsonRaw } from "../../server/src/deepseek";
-import { logger } from "../../server/src/logger";
-import { FixedWindowRateLimiter } from "../../server/src/rateLimit";
-import { createAgentRequestSchema } from "../../server/src/requestSchemas";
-import { AgentRunResponseSchema } from "../../server/src/schemas";
+import type { AgentRunRequest } from "../../server/src/agentProtocol.js";
+import { buildAgentSystemPrompt, buildAgentUserPrompt } from "../../server/src/agentPrompt.js";
+import { loadConfig } from "../../server/src/config.js";
+import { callDeepSeekJsonRaw } from "../../server/src/deepseek.js";
+import { logger } from "../../server/src/logger.js";
+import { FixedWindowRateLimiter } from "../../server/src/rateLimit.js";
+import { createAgentRequestSchema } from "../../server/src/requestSchemas.js";
+import { AgentRunResponseSchema } from "../../server/src/schemas.js";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const STRICT_JSON_HINT =
