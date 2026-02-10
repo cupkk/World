@@ -79,173 +79,212 @@ function getSingletonLimiter(config: ReturnType<typeof loadConfig>) {
 }
 
 export default async function handler(req: any, res: any) {
-  setCommonHeaders(res);
-
-  const incoming = getHeader(req, REQUEST_ID_HEADER);
-  const requestId = incoming && incoming.trim() ? incoming.trim() : randomUUID();
-  res.setHeader(REQUEST_ID_HEADER, requestId);
-
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(
-      JSON.stringify({
-        error: {
-          code: "METHOD_NOT_ALLOWED",
-          message: "Only POST is supported",
-          request_id: getRequestId(res)
-        }
-      })
-    );
-    return;
-  }
-
-  const config = loadConfig(process.env);
-  const limiter = getSingletonLimiter(config);
-  limiter.cleanup();
-  const rate = limiter.consume(getClientIp(req));
-  res.setHeader("X-RateLimit-Limit", String(limiter.maxRequests));
-  res.setHeader("X-RateLimit-Remaining", String(rate.remaining));
-  res.setHeader("X-RateLimit-Reset", String(Math.floor(rate.resetAt / 1000)));
-  if (!rate.allowed) {
-    res.statusCode = 429;
-    res.setHeader("Retry-After", String(rate.retryAfterSec));
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(
-      JSON.stringify({
-        error: {
-          code: "RATE_LIMITED",
-          message: "Too many requests. Please try again later.",
-          request_id: getRequestId(res)
-        }
-      })
-    );
-    return;
-  }
-
-  if (!config.deepseekApiKey) {
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(
-      JSON.stringify({
-        error: {
-          code: "CONFIG_ERROR",
-          message: "Missing DEEPSEEK_API_KEY env var",
-          request_id: getRequestId(res)
-        }
-      })
-    );
-    return;
-  }
-
-  let body: unknown;
   try {
-    body = await readJsonBody(req);
-  } catch {
-    res.statusCode = 400;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(
-      JSON.stringify({
-        error: {
-          code: "INVALID_JSON",
-          message: "Invalid JSON body",
-          request_id: getRequestId(res)
-        }
-      })
-    );
-    return;
-  }
+    setCommonHeaders(res);
 
-  const agentRequestSchema = createAgentRequestSchema({
-    maxMessages: config.limits.maxMessages,
-    maxMessageChars: config.limits.maxMessageChars,
-    maxBoardSections: config.limits.maxBoardSections,
-    maxSectionTitleChars: config.limits.maxSectionTitleChars,
-    maxSectionContentChars: config.limits.maxSectionContentChars
-  });
+    const incoming = getHeader(req, REQUEST_ID_HEADER);
+    const requestId = incoming && incoming.trim() ? incoming.trim() : randomUUID();
+    res.setHeader(REQUEST_ID_HEADER, requestId);
 
-  const parsedReq = agentRequestSchema.safeParse(body);
-  if (!parsedReq.success) {
-    res.statusCode = 400;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(
-      JSON.stringify({
-        error: {
-          code: "INVALID_REQUEST",
-          message: "Invalid request payload",
-          details: parsedReq.error.flatten(),
-          request_id: getRequestId(res)
-        }
-      })
-    );
-    return;
-  }
-
-  const payload = parsedReq.data as AgentRunRequest;
-  const system = buildAgentSystemPrompt();
-  const user = buildAgentUserPrompt(payload, {
-    maxMessages: config.limits.maxMessages,
-    maxMessageChars: config.limits.maxMessageChars,
-    maxBoardSections: config.limits.maxBoardSections,
-    maxSectionChars: config.limits.maxSectionContentChars
-  });
-
-  const streamModel = config.ai.primaryModel === "deepseek-reasoner" ? config.ai.fallbackModel : config.ai.primaryModel;
-
-  res.statusCode = 200;
-  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-
-  writeSseEvent(res, "meta", {
-    request_id: getRequestId(res),
-    session_id: payload.session_id,
-    mode: "stream"
-  });
-
-  let assistantSnapshot = "";
-  let lastEmittedLength = 0;
-
-  try {
-    const messages = [
-      { role: "system" as const, content: system },
-      { role: "user" as const, content: user }
-    ];
-
-    const { parsed } = await callDeepSeekJsonStreamRaw({
-      apiKey: config.deepseekApiKey,
-      model: streamModel,
-      messages,
-      maxTokens: config.ai.maxTokens,
-      timeoutMs: config.ai.timeoutMs,
-      onToken: (token) => {
-        assistantSnapshot += token;
-        const partialText = extractAssistantMessageFromJsonPrefix(assistantSnapshot);
-        if (partialText.length <= lastEmittedLength) return;
-        const delta = partialText.slice(lastEmittedLength);
-        lastEmittedLength = partialText.length;
-        writeSseEvent(res, "assistant_delta", { delta });
-      }
-    });
-
-    const ok = AgentRunResponseSchema.parse(parsed);
-    if (ok.assistant_message.length > lastEmittedLength) {
-      const delta = ok.assistant_message.slice(lastEmittedLength);
-      writeSseEvent(res, "assistant_delta", { delta });
+    if (req.method !== "POST") {
+      res.statusCode = 405;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "METHOD_NOT_ALLOWED",
+            message: "Only POST is supported",
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
     }
 
-    writeSseEvent(res, "result", ok);
-    res.end();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.error("agent.stream_failed", {
-      request_id: getRequestId(res),
-      session_id: payload.session_id,
-      model: streamModel,
-      message
+    let config: ReturnType<typeof loadConfig>;
+    try {
+      config = loadConfig(process.env);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "CONFIG_ERROR",
+            message,
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
+    }
+
+    const limiter = getSingletonLimiter(config);
+    limiter.cleanup();
+    const rate = limiter.consume(getClientIp(req));
+    res.setHeader("X-RateLimit-Limit", String(limiter.maxRequests));
+    res.setHeader("X-RateLimit-Remaining", String(rate.remaining));
+    res.setHeader("X-RateLimit-Reset", String(Math.floor(rate.resetAt / 1000)));
+    if (!rate.allowed) {
+      res.statusCode = 429;
+      res.setHeader("Retry-After", String(rate.retryAfterSec));
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "RATE_LIMITED",
+            message: "Too many requests. Please try again later.",
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
+    }
+
+    if (!config.deepseekApiKey) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "CONFIG_ERROR",
+            message: "Missing DEEPSEEK_API_KEY env var",
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "INVALID_JSON",
+            message: "Invalid JSON body",
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
+    }
+
+    const agentRequestSchema = createAgentRequestSchema({
+      maxMessages: config.limits.maxMessages,
+      maxMessageChars: config.limits.maxMessageChars,
+      maxBoardSections: config.limits.maxBoardSections,
+      maxSectionTitleChars: config.limits.maxSectionTitleChars,
+      maxSectionContentChars: config.limits.maxSectionContentChars
     });
 
-    sendErrorEvent(res, "AI_AGENT_STREAM_FAILED", "AI stream failed", message);
-    res.end();
+    const parsedReq = agentRequestSchema.safeParse(body);
+    if (!parsedReq.success) {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "INVALID_REQUEST",
+            message: "Invalid request payload",
+            details: parsedReq.error.flatten(),
+            request_id: getRequestId(res)
+          }
+        })
+      );
+      return;
+    }
+
+    const payload = parsedReq.data as AgentRunRequest;
+    const system = buildAgentSystemPrompt();
+    const user = buildAgentUserPrompt(payload, {
+      maxMessages: config.limits.maxMessages,
+      maxMessageChars: config.limits.maxMessageChars,
+      maxBoardSections: config.limits.maxBoardSections,
+      maxSectionChars: config.limits.maxSectionContentChars
+    });
+
+    const streamModel =
+      config.ai.primaryModel === "deepseek-reasoner" ? config.ai.fallbackModel : config.ai.primaryModel;
+
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    writeSseEvent(res, "meta", {
+      request_id: getRequestId(res),
+      session_id: payload.session_id,
+      mode: "stream"
+    });
+
+    let assistantSnapshot = "";
+    let lastEmittedLength = 0;
+
+    try {
+      const messages = [
+        { role: "system" as const, content: system },
+        { role: "user" as const, content: user }
+      ];
+
+      const { parsed } = await callDeepSeekJsonStreamRaw({
+        apiKey: config.deepseekApiKey,
+        model: streamModel,
+        messages,
+        maxTokens: config.ai.maxTokens,
+        timeoutMs: config.ai.timeoutMs,
+        onToken: (token) => {
+          assistantSnapshot += token;
+          const partialText = extractAssistantMessageFromJsonPrefix(assistantSnapshot);
+          if (partialText.length <= lastEmittedLength) return;
+          const delta = partialText.slice(lastEmittedLength);
+          lastEmittedLength = partialText.length;
+          writeSseEvent(res, "assistant_delta", { delta });
+        }
+      });
+
+      const ok = AgentRunResponseSchema.parse(parsed);
+      if (ok.assistant_message.length > lastEmittedLength) {
+        const delta = ok.assistant_message.slice(lastEmittedLength);
+        writeSseEvent(res, "assistant_delta", { delta });
+      }
+
+      writeSseEvent(res, "result", ok);
+      res.end();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("agent.stream_failed", {
+        request_id: getRequestId(res),
+        session_id: payload.session_id,
+        model: streamModel,
+        message
+      });
+
+      sendErrorEvent(res, "AI_AGENT_STREAM_FAILED", "AI stream failed", message);
+      res.end();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "INTERNAL_SERVER_ERROR",
+            message,
+            request_id: getRequestId(res)
+          }
+        })
+      );
+    } catch {
+      res.statusCode = 500;
+      res.end();
+    }
   }
 }

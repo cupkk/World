@@ -84,111 +84,128 @@ function getSingletonLimiter(config: ReturnType<typeof loadConfig>) {
 }
 
 export default async function handler(req: any, res: any) {
-  setCommonHeaders(res);
-
-  const incoming = getHeader(req, REQUEST_ID_HEADER);
-  const requestId = incoming && incoming.trim() ? incoming.trim() : randomUUID();
-  res.setHeader(REQUEST_ID_HEADER, requestId);
-
-  if (req.method !== "POST") {
-    sendError(res, 405, "METHOD_NOT_ALLOWED", "Only POST is supported");
-    return;
-  }
-
-  const config = loadConfig(process.env);
-  const limiter = getSingletonLimiter(config);
-  limiter.cleanup();
-  const rate = limiter.consume(getClientIp(req));
-  res.setHeader("X-RateLimit-Limit", String(limiter.maxRequests));
-  res.setHeader("X-RateLimit-Remaining", String(rate.remaining));
-  res.setHeader("X-RateLimit-Reset", String(Math.floor(rate.resetAt / 1000)));
-  if (!rate.allowed) {
-    res.setHeader("Retry-After", String(rate.retryAfterSec));
-    sendError(res, 429, "RATE_LIMITED", "Too many requests. Please try again later.");
-    return;
-  }
-
-  if (!config.deepseekApiKey) {
-    sendError(res, 500, "CONFIG_ERROR", "Missing DEEPSEEK_API_KEY env var");
-    return;
-  }
-
-  let body: unknown;
   try {
-    body = await readJsonBody(req);
-  } catch {
-    sendError(res, 400, "INVALID_JSON", "Invalid JSON body");
-    return;
-  }
+    setCommonHeaders(res);
 
-  const agentRequestSchema = createAgentRequestSchema({
-    maxMessages: config.limits.maxMessages,
-    maxMessageChars: config.limits.maxMessageChars,
-    maxBoardSections: config.limits.maxBoardSections,
-    maxSectionTitleChars: config.limits.maxSectionTitleChars,
-    maxSectionContentChars: config.limits.maxSectionContentChars
-  });
+    const incoming = getHeader(req, REQUEST_ID_HEADER);
+    const requestId = incoming && incoming.trim() ? incoming.trim() : randomUUID();
+    res.setHeader(REQUEST_ID_HEADER, requestId);
 
-  const parsedReq = agentRequestSchema.safeParse(body);
-  if (!parsedReq.success) {
-    sendError(res, 400, "INVALID_REQUEST", "Invalid request payload", parsedReq.error.flatten());
-    return;
-  }
-
-  const payload = parsedReq.data as AgentRunRequest;
-  const system = buildAgentSystemPrompt();
-  const user = buildAgentUserPrompt(payload, {
-    maxMessages: config.limits.maxMessages,
-    maxMessageChars: config.limits.maxMessageChars,
-    maxBoardSections: config.limits.maxBoardSections,
-    maxSectionChars: config.limits.maxSectionContentChars
-  });
-
-  const baseMessages = [
-    { role: "system" as const, content: system },
-    { role: "user" as const, content: user }
-  ];
-
-  const attempts: Array<{ model: "deepseek-reasoner" | "deepseek-chat"; hint?: string }> = [
-    { model: config.ai.primaryModel },
-    { model: config.ai.primaryModel, hint: STRICT_JSON_HINT }
-  ];
-
-  if (config.ai.fallbackModel !== config.ai.primaryModel) {
-    attempts.push({ model: config.ai.fallbackModel });
-    attempts.push({ model: config.ai.fallbackModel, hint: STRICT_JSON_HINT });
-  }
-
-  const errors: string[] = [];
-  for (let i = 0; i < attempts.length; i += 1) {
-    const attempt = attempts[i];
-    try {
-      const messages = attempt.hint
-        ? [...baseMessages, { role: "user" as const, content: attempt.hint }]
-        : baseMessages;
-
-      const { parsed } = await callDeepSeekJsonRaw({
-        apiKey: config.deepseekApiKey,
-        model: attempt.model,
-        messages,
-        maxTokens: config.ai.maxTokens,
-        timeoutMs: config.ai.timeoutMs
-      });
-
-      const ok = AgentRunResponseSchema.parse(parsed);
-      sendJson(res, 200, ok);
+    if (req.method !== "POST") {
+      sendError(res, 405, "METHOD_NOT_ALLOWED", "Only POST is supported");
       return;
+    }
+
+    let config: ReturnType<typeof loadConfig>;
+    try {
+      config = loadConfig(process.env);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      errors.push(`attempt_${i + 1}[${attempt.model}${attempt.hint ? ":strict" : ""}]: ${message}`);
+      sendError(res, 500, "CONFIG_ERROR", message);
+      return;
+    }
+    const limiter = getSingletonLimiter(config);
+    limiter.cleanup();
+    const rate = limiter.consume(getClientIp(req));
+    res.setHeader("X-RateLimit-Limit", String(limiter.maxRequests));
+    res.setHeader("X-RateLimit-Remaining", String(rate.remaining));
+    res.setHeader("X-RateLimit-Reset", String(Math.floor(rate.resetAt / 1000)));
+    if (!rate.allowed) {
+      res.setHeader("Retry-After", String(rate.retryAfterSec));
+      sendError(res, 429, "RATE_LIMITED", "Too many requests. Please try again later.");
+      return;
+    }
+
+    if (!config.deepseekApiKey) {
+      sendError(res, 500, "CONFIG_ERROR", "Missing DEEPSEEK_API_KEY env var");
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendError(res, 400, "INVALID_JSON", "Invalid JSON body");
+      return;
+    }
+
+    const agentRequestSchema = createAgentRequestSchema({
+      maxMessages: config.limits.maxMessages,
+      maxMessageChars: config.limits.maxMessageChars,
+      maxBoardSections: config.limits.maxBoardSections,
+      maxSectionTitleChars: config.limits.maxSectionTitleChars,
+      maxSectionContentChars: config.limits.maxSectionContentChars
+    });
+
+    const parsedReq = agentRequestSchema.safeParse(body);
+    if (!parsedReq.success) {
+      sendError(res, 400, "INVALID_REQUEST", "Invalid request payload", parsedReq.error.flatten());
+      return;
+    }
+
+    const payload = parsedReq.data as AgentRunRequest;
+    const system = buildAgentSystemPrompt();
+    const user = buildAgentUserPrompt(payload, {
+      maxMessages: config.limits.maxMessages,
+      maxMessageChars: config.limits.maxMessageChars,
+      maxBoardSections: config.limits.maxBoardSections,
+      maxSectionChars: config.limits.maxSectionContentChars
+    });
+
+    const baseMessages = [
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: user }
+    ];
+
+    const attempts: Array<{ model: "deepseek-reasoner" | "deepseek-chat"; hint?: string }> = [
+      { model: config.ai.primaryModel },
+      { model: config.ai.primaryModel, hint: STRICT_JSON_HINT }
+    ];
+
+    if (config.ai.fallbackModel !== config.ai.primaryModel) {
+      attempts.push({ model: config.ai.fallbackModel });
+      attempts.push({ model: config.ai.fallbackModel, hint: STRICT_JSON_HINT });
+    }
+
+    const errors: string[] = [];
+    for (let i = 0; i < attempts.length; i += 1) {
+      const attempt = attempts[i];
+      try {
+        const messages = attempt.hint
+          ? [...baseMessages, { role: "user" as const, content: attempt.hint }]
+          : baseMessages;
+
+        const { parsed } = await callDeepSeekJsonRaw({
+          apiKey: config.deepseekApiKey,
+          model: attempt.model,
+          messages,
+          maxTokens: config.ai.maxTokens,
+          timeoutMs: config.ai.timeoutMs
+        });
+
+        const ok = AgentRunResponseSchema.parse(parsed);
+        sendJson(res, 200, ok);
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`attempt_${i + 1}[${attempt.model}${attempt.hint ? ":strict" : ""}]: ${message}`);
+      }
+    }
+
+    logger.error("agent.failed", {
+      request_id: getRequestId(res),
+      session_id: payload.session_id,
+      attempts: errors
+    });
+
+    sendError(res, 502, "AI_AGENT_FAILED", "AI agent failed after retries", { attempts: errors });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      sendError(res, 500, "INTERNAL_SERVER_ERROR", message);
+    } catch {
+      res.statusCode = 500;
+      res.end();
     }
   }
-
-  logger.error("agent.failed", {
-    request_id: getRequestId(res),
-    session_id: payload.session_id,
-    attempts: errors
-  });
-
-  sendError(res, 502, "AI_AGENT_FAILED", "AI agent failed after retries", { attempts: errors });
 }
