@@ -8,6 +8,7 @@ export type AgentClientError = {
 
 export type AgentStreamCallbacks = {
   onAssistantDelta?: (delta: string) => void;
+  onBoardActionsPreview?: (boardActions: AgentRunResponse["board_actions"]) => void;
 };
 
 const CLIENT_REQUEST_TIMEOUT_MS = 65_000;
@@ -156,6 +157,18 @@ export async function runAgentStream(
         const parsed = JSON.parse(data) as { delta?: string };
         if (typeof parsed.delta === "string" && parsed.delta) {
           callbacks.onAssistantDelta?.(parsed.delta);
+        }
+      } catch {
+        // ignore malformed stream event
+      }
+      return;
+    }
+
+    if (event === "board_actions_preview") {
+      try {
+        const parsed = JSON.parse(data) as { board_actions?: AgentRunResponse["board_actions"] };
+        if (Array.isArray(parsed.board_actions)) {
+          callbacks.onBoardActionsPreview?.(parsed.board_actions);
         }
       } catch {
         // ignore malformed stream event

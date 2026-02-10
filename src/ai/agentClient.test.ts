@@ -1,10 +1,10 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRunRequest } from "./agentProtocol";
 import { runAgent, runAgentStream } from "./agentClient";
 
 const requestFixture: AgentRunRequest = {
   session_id: "session-test",
-  messages: [{ role: "user", content: "你好" }],
+  messages: [{ role: "user", content: "hello" }],
   board_sections: []
 };
 
@@ -30,24 +30,27 @@ describe("agentClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("runAgentStream parses result frame even without trailing frame delimiter", async () => {
+  it("runAgentStream parses result frame and board preview events", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         streamFromChunks([
-          'event: assistant_delta\ndata: {"delta":"你"}\n\n',
-          'event: result\ndata: {"assistant_message":"你好","board_actions":[]}\n'
+          'event: assistant_delta\ndata: {"delta":"hi "}\n\n',
+          'event: board_actions_preview\ndata: {"board_actions":[{"action":"set_template","template_type":"table"}]}\n\n',
+          'event: result\ndata: {"assistant_message":"hi there","board_actions":[{"action":"set_template","template_type":"table"}]}\n'
         ]),
         { status: 200 }
       )
     );
 
     const onAssistantDelta = vi.fn();
-    const result = await runAgentStream(requestFixture, { onAssistantDelta });
+    const onBoardActionsPreview = vi.fn();
+    const result = await runAgentStream(requestFixture, { onAssistantDelta, onBoardActionsPreview });
 
-    expect(onAssistantDelta).toHaveBeenCalledWith("你");
+    expect(onAssistantDelta).toHaveBeenCalledWith("hi ");
+    expect(onBoardActionsPreview).toHaveBeenCalledWith([{ action: "set_template", template_type: "table" }]);
     expect(result).toEqual({
-      assistant_message: "你好",
-      board_actions: []
+      assistant_message: "hi there",
+      board_actions: [{ action: "set_template", template_type: "table" }]
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/ai/agent/stream",
@@ -57,12 +60,9 @@ describe("agentClient", () => {
 
   it("runAgentStream surfaces server stream error event", async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(
-        streamFromChunks([
-          'event: error\ndata: {"message":"AI stream failed","request_id":"req_1"}\n\n'
-        ]),
-        { status: 200 }
-      )
+      new Response(streamFromChunks(['event: error\ndata: {"message":"AI stream failed","request_id":"req_1"}\n\n']), {
+        status: 200
+      })
     );
 
     await expect(runAgentStream(requestFixture)).rejects.toMatchObject({
@@ -76,7 +76,7 @@ describe("agentClient", () => {
       new Response(
         JSON.stringify({
           error: {
-            message: "配置缺失",
+            message: "config missing",
             request_id: "req_2"
           }
         }),
@@ -91,3 +91,4 @@ describe("agentClient", () => {
     });
   });
 });
+

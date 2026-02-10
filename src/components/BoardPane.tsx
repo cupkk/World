@@ -1,9 +1,10 @@
-﻿import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+﻿
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Copy, Download, Undo2, Redo2, Check, Heading1, Heading2 } from "lucide-react";
-import type { BoardHighlightRequest, BoardSection } from "../types/workspace";
+import type { BoardHighlightRequest, BoardSection, BoardTemplateType } from "../types/workspace";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
 
 interface BoardPaneProps {
@@ -14,13 +15,36 @@ interface BoardPaneProps {
   canUndo: boolean;
   canRedo: boolean;
   highlightRequest?: BoardHighlightRequest | null;
+  templateType?: BoardTemplateType;
+  onTemplateTypeChange?: (template: BoardTemplateType) => void;
+  readOnly?: boolean;
 }
 
 const HTML_TAG_PATTERN = /<([a-z][\w-]*)(\s[^>]*)?>/i;
 const HEADING_TAG_PATTERN = /^H[1-3]$/i;
 const MIN_EDITOR_HTML = "<p></p>";
 const EDITOR_CHANGE_DEBOUNCE_MS = 150;
+const STRUCTURED_CHANGE_DEBOUNCE_MS = 150;
 const HIGHLIGHT_COLLAPSE_DELAY_MS = 1800;
+
+const TEMPLATE_OPTIONS: Array<{ value: BoardTemplateType; label: string }> = [
+  { value: "document", label: "文档" },
+  { value: "table", label: "表格" },
+  { value: "code", label: "代码" }
+];
+
+const TEMPLATE_PLACEHOLDER: Record<BoardTemplateType, string> = {
+  document: "从空白页开始：先写标题，再逐步补充小标题和正文...",
+  table: "# 分析表\n\n| 维度 | 现状 | 目标 | 动作 |\n| --- | --- | --- | --- |\n| 用户 |  |  |  |",
+  code: "# 代码草稿\n\n```ts\n// 在这里继续完善代码\n```"
+};
+
+type EditableTableSection = {
+  id: string;
+  title: string;
+  headers: string[];
+  rows: string[][];
+};
 
 function makeSectionId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -89,6 +113,198 @@ function buildDocumentHtml(sections: BoardSection[]) {
       return `<${tag}>${title}</${tag}>${content}`;
     })
     .join("");
+}
+
+function buildStructuredTextFromSections(sections: BoardSection[]) {
+  if (!sections.length) return "";
+  return sections
+    .map((section, index) => {
+      const title = normalizeTitle(section.title, index);
+      const body = htmlToPlainText(section.content);
+      return `${index === 0 ? "#" : "##"} ${title}\n${body}`.trim();
+    })
+    .join("\n\n");
+}
+
+function splitMarkdownTableLine(line: string) {
+  const normalized = line.trim();
+  if (!normalized.includes("|")) return [];
+  const noEdge = normalized.replace(/^\|/, "").replace(/\|$/, "");
+  return noEdge.split("|").map((cell) => cell.trim());
+}
+
+function normalizeTableRows(rows: string[][], colCount: number) {
+  if (!rows.length) return [Array.from({ length: colCount }, () => "")];
+  return rows.map((row) => {
+    const next = row.slice(0, colCount);
+    while (next.length < colCount) next.push("");
+    return next;
+  });
+}
+
+function parseEditableTableFromSection(section: BoardSection, index: number): EditableTableSection {
+  const plain = htmlToPlainText(section.content).replace(/\r\n/g, "\n");
+  const lines = plain
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const tableLines = lines.filter((line) => line.includes("|"));
+  if (tableLines.length >= 2) {
+    const headers = splitMarkdownTableLine(tableLines[0]);
+    const delimiterCells = splitMarkdownTableLine(tableLines[1]);
+    const isDelimiter = delimiterCells.length > 0 && delimiterCells.every((cell) => /^:?-{3,}:?$/.test(cell));
+    const bodyStart = isDelimiter ? 2 : 1;
+    const bodyRows = tableLines.slice(bodyStart).map(splitMarkdownTableLine);
+    if (headers.length > 0) {
+      const normalizedHeaders = headers.map((cell, colIndex) => cell || `列${colIndex + 1}`);
+      return {
+        id: section.id,
+        title: normalizeTitle(section.title, index),
+        headers: normalizedHeaders,
+        rows: normalizeTableRows(bodyRows, normalizedHeaders.length)
+      };
+    }
+  }
+
+  return {
+    id: section.id,
+    title: normalizeTitle(section.title, index),
+    headers: ["维度", "现状", "目标", "动作"],
+    rows: [[plain.trim(), "", "", ""]]
+  };
+}
+
+function buildEditableTablesFromSections(sections: BoardSection[]) {
+  if (!sections.length) {
+    return [
+      {
+        id: makeSectionId(),
+        title: "分析表",
+        headers: ["维度", "现状", "目标", "动作"],
+        rows: [["", "", "", ""]]
+      }
+    ] satisfies EditableTableSection[];
+  }
+  return sections.map((section, index) => parseEditableTableFromSection(section, index));
+}
+
+function escapeMarkdownCell(cell: string) {
+  return cell.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function buildMarkdownTableContent(table: EditableTableSection) {
+  const safeHeaders = table.headers.map((header) => escapeMarkdownCell(header.trim() || " "));
+  const headerLine = `| ${safeHeaders.join(" | ")} |`;
+  const delimiterLine = `| ${safeHeaders.map(() => "---").join(" | ")} |`;
+  const bodyLines = normalizeTableRows(table.rows, safeHeaders.length).map(
+    (row) => `| ${row.map((cell) => escapeMarkdownCell(cell.trim())).join(" | ")} |`
+  );
+  return [headerLine, delimiterLine, ...bodyLines].join("\n");
+}
+
+function buildSectionsFromEditableTables(tables: EditableTableSection[], previousSections: BoardSection[]): BoardSection[] {
+  const now = Date.now();
+  const usedIds = new Set<string>();
+  return tables.map((table, index) => {
+    const matchedById = previousSections.find((section) => section.id === table.id && !usedIds.has(section.id));
+    const matchedByIndex =
+      previousSections[index] && !usedIds.has(previousSections[index].id) ? previousSections[index] : null;
+    const id = matchedById?.id ?? matchedByIndex?.id ?? makeSectionId();
+    usedIds.add(id);
+    return {
+      id,
+      title: normalizeTitle(table.title, index),
+      content: buildMarkdownTableContent(table),
+      source: "user",
+      lastUpdated: now
+    } satisfies BoardSection;
+  });
+}
+function areTableSectionsEqual(left: EditableTableSection[], right: EditableTableSection[]) {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const l = left[i];
+    const r = right[i];
+    if (!l || !r) return false;
+    if (l.id !== r.id || l.title !== r.title) return false;
+    if (l.headers.length !== r.headers.length || l.rows.length !== r.rows.length) return false;
+    for (let col = 0; col < l.headers.length; col += 1) {
+      if (l.headers[col] !== r.headers[col]) return false;
+    }
+    for (let row = 0; row < l.rows.length; row += 1) {
+      const leftRow = l.rows[row];
+      const rightRow = r.rows[row];
+      if (!leftRow || !rightRow || leftRow.length !== rightRow.length) return false;
+      for (let col = 0; col < leftRow.length; col += 1) {
+        if (leftRow[col] !== rightRow[col]) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function parseSectionsFromStructuredText(structuredText: string, previousSections: BoardSection[]): BoardSection[] {
+  const normalizedText = structuredText.replace(/\r\n/g, "\n").trim();
+  if (!normalizedText) return [];
+
+  const lines = normalizedText.split("\n");
+  const now = Date.now();
+  const parsed: Array<{ title: string; content: string }> = [];
+  let currentTitle = "";
+  let currentBody: string[] = [];
+
+  const flush = () => {
+    const body = currentBody.join("\n").trim();
+    if (!currentTitle && !body) return;
+    parsed.push({
+      title: normalizeTitle(currentTitle, parsed.length),
+      content: body
+    });
+    currentTitle = "";
+    currentBody = [];
+  };
+
+  for (const line of lines) {
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    if (heading) {
+      flush();
+      currentTitle = heading[1]?.trim() ?? "";
+      continue;
+    }
+    currentBody.push(line);
+  }
+  flush();
+
+  if (!parsed.length) {
+    parsed.push({
+      title: normalizeTitle(previousSections[0]?.title ?? "内容", 0),
+      content: normalizedText
+    });
+  }
+
+  const usedIds = new Set<string>();
+  const takeSectionId = (title: string, index: number) => {
+    const byTitle = previousSections.find((section) => !usedIds.has(section.id) && section.title.trim() === title.trim());
+    if (byTitle) return byTitle.id;
+    const byIndex = previousSections[index];
+    if (byIndex && !usedIds.has(byIndex.id)) return byIndex.id;
+    return makeSectionId();
+  };
+
+  const sections = parsed.map((entry, index) => {
+    const id = takeSectionId(entry.title, index);
+    usedIds.add(id);
+    return {
+      id,
+      title: normalizeTitle(entry.title, index),
+      content: entry.content,
+      source: "user" as const,
+      lastUpdated: now
+    };
+  });
+
+  return dedupeSections(sections);
 }
 
 function areSectionsEqual(left: BoardSection[], right: BoardSection[]) {
@@ -206,7 +422,7 @@ function findTextRangeInSection(
   const candidates = [
     normalized,
     ...normalized
-      .split(/[\s,，。；;:：()\[\]【】]+/)
+      .split(/[\s,，。；;:：()（）[\]【】]+/)
       .map((token) => token.trim())
       .filter((token) => token.length >= 2)
       .sort((a, b) => b.length - a.length)
@@ -228,6 +444,152 @@ function findTextRangeInSection(
   }
 
   return null;
+}
+function findStructuredHighlightRange(
+  value: string,
+  sections: BoardSection[],
+  request: BoardHighlightRequest
+): { start: number; end: number } | null {
+  function findAnchorRangeInWindow(
+    source: string,
+    anchorText: string,
+    windowStart: number,
+    windowEnd: number
+  ): { start: number; end: number } | null {
+    const normalized = anchorText.trim();
+    if (!normalized) return null;
+
+    const segment = source.slice(windowStart, windowEnd);
+    const loweredSegment = segment.toLowerCase();
+    const candidates = [
+      normalized,
+      ...normalized
+        .split(/[\s,，。；;:：()（）[\]【】]+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2)
+        .sort((a, b) => b.length - a.length)
+    ];
+
+    for (const candidate of candidates) {
+      const loweredCandidate = candidate.toLowerCase();
+      const index = loweredSegment.indexOf(loweredCandidate);
+      if (index < 0) continue;
+      return {
+        start: windowStart + index,
+        end: Math.min(source.length, windowStart + index + candidate.length)
+      };
+    }
+
+    return null;
+  }
+
+  function findStructuredSectionWindow(
+    source: string,
+    sectionTitle: string
+  ): { headingStart: number; headingEnd: number; sectionEnd: number } | null {
+    const normalizedTitle = sectionTitle.trim().toLowerCase();
+    if (!normalizedTitle) return null;
+
+    const headingRegex = /^#{1,3}\s+(.+)$/gm;
+    const headings: Array<{ start: number; end: number; title: string }> = [];
+    let match: RegExpExecArray | null = headingRegex.exec(source);
+    while (match) {
+      headings.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        title: (match[1] ?? "").trim()
+      });
+      match = headingRegex.exec(source);
+    }
+
+    if (!headings.length) return null;
+
+    const headingIndex = headings.findIndex((heading) => heading.title.toLowerCase() === normalizedTitle);
+    if (headingIndex < 0) return null;
+    const heading = headings[headingIndex];
+    const nextHeading = headings[headingIndex + 1];
+
+    return {
+      headingStart: heading.start,
+      headingEnd: heading.end,
+      sectionEnd: nextHeading ? nextHeading.start : source.length
+    };
+  }
+
+  const section = sections.find((item) => item.id === request.sectionId);
+  const anchor = request.anchorText?.trim();
+
+  if (section) {
+    const sectionWindow = findStructuredSectionWindow(value, section.title);
+    if (sectionWindow) {
+      if (anchor) {
+        const matched = findAnchorRangeInWindow(value, anchor, sectionWindow.headingEnd, sectionWindow.sectionEnd);
+        if (matched) return matched;
+      }
+      return {
+        start: sectionWindow.headingStart,
+        end: sectionWindow.headingEnd
+      };
+    }
+  }
+
+  if (anchor) {
+    const globalMatch = findAnchorRangeInWindow(value, anchor, 0, value.length);
+    if (globalMatch) return globalMatch;
+  }
+
+  if (section) {
+    const headingTokens = [`# ${section.title}`, `## ${section.title}`];
+    for (const heading of headingTokens) {
+      const headingIndex = value.indexOf(heading);
+      if (headingIndex >= 0) {
+        return { start: headingIndex, end: Math.min(value.length, headingIndex + heading.length) };
+      }
+    }
+
+    const contentToken = htmlToPlainText(section.content).trim();
+    if (contentToken) {
+      const snippet = contentToken.slice(0, Math.min(40, contentToken.length)).toLowerCase();
+      const snippetIndex = value.toLowerCase().indexOf(snippet);
+      if (snippetIndex >= 0) {
+        return {
+          start: snippetIndex,
+          end: Math.min(value.length, snippetIndex + Math.max(8, snippet.length))
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function findAnchorCellInTable(table: EditableTableSection, anchorText?: string): { row: number; col: number } | null {
+  const anchor = anchorText?.trim().toLowerCase();
+  if (!anchor) return null;
+
+  for (let row = 0; row < table.rows.length; row += 1) {
+    const rowCells = table.rows[row] ?? [];
+    for (let col = 0; col < rowCells.length; col += 1) {
+      const cell = (rowCells[col] ?? "").toLowerCase();
+      if (!cell) continue;
+      if (cell.includes(anchor) || anchor.includes(cell)) {
+        return { row, col };
+      }
+    }
+  }
+
+  for (let col = 0; col < table.headers.length; col += 1) {
+    const header = (table.headers[col] ?? "").toLowerCase();
+    if (header.includes(anchor) || anchor.includes(header)) {
+      return { row: -1, col };
+    }
+  }
+
+  return null;
+}
+
+function buildTableCellKey(sectionId: string, row: number, col: number) {
+  return `${sectionId}:${row}:${col}`;
 }
 
 function ToolbarButton({
@@ -251,6 +613,8 @@ function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel ?? label}
+      aria-pressed={active}
+      title={ariaLabel ?? label}
       className={`flex h-8 items-center justify-center gap-1 rounded-lg border px-2 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
         active
           ? "border-[var(--accent-strong)] bg-[var(--accent-strong)] text-white"
@@ -270,14 +634,25 @@ const BoardPane = memo(function BoardPane({
   onRedo,
   canUndo,
   canRedo,
-  highlightRequest = null
+  highlightRequest = null,
+  templateType = "document",
+  onTemplateTypeChange,
+  readOnly = false
 }: BoardPaneProps) {
   const [copySuccess, setCopySuccess] = useState(false);
+  const [structuredDraft, setStructuredDraft] = useState(() => buildStructuredTextFromSections(sections));
+  const [tableDraft, setTableDraft] = useState<EditableTableSection[]>(() => buildEditableTablesFromSections(sections));
   const sectionsRef = useRef(sections);
   const onSectionsChangeRef = useRef(onSectionsChange);
   const pendingHtmlRef = useRef<string | null>(null);
+  const pendingStructuredTextRef = useRef<string | null>(null);
+  const pendingTableSectionsRef = useRef<BoardSection[] | null>(null);
   const flushTimerRef = useRef<number | null>(null);
+  const structuredFlushTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
+  const structuredInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const tableCellRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const previousTemplateRef = useRef(templateType);
 
   const latestUpdatedAt = useMemo(
     () => sections.reduce((max, section) => Math.max(max, section.lastUpdated || 0), 0),
@@ -294,6 +669,8 @@ const BoardPane = memo(function BoardPane({
 
   const documentHtml = useMemo(() => buildDocumentHtml(sections), [sections]);
   const documentHtmlRef = useRef(documentHtml);
+  const isDocumentMode = templateType === "document";
+  const isTableMode = templateType === "table";
 
   useEffect(() => {
     sectionsRef.current = sections;
@@ -302,11 +679,17 @@ const BoardPane = memo(function BoardPane({
   useEffect(() => {
     onSectionsChangeRef.current = onSectionsChange;
   }, [onSectionsChange]);
-
   const clearFlushTimer = useCallback(() => {
     if (flushTimerRef.current !== null) {
       window.clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
+    }
+  }, []);
+
+  const clearStructuredFlushTimer = useCallback(() => {
+    if (structuredFlushTimerRef.current !== null) {
+      window.clearTimeout(structuredFlushTimerRef.current);
+      structuredFlushTimerRef.current = null;
     }
   }, []);
 
@@ -324,6 +707,27 @@ const BoardPane = memo(function BoardPane({
     onSectionsChangeRef.current(parsed);
   }, []);
 
+  const flushPendingStructuredUpdate = useCallback(() => {
+    const pendingTableSections = pendingTableSectionsRef.current;
+    if (pendingTableSections) {
+      pendingTableSectionsRef.current = null;
+      if (areSectionsEqual(pendingTableSections, sectionsRef.current)) return;
+      sectionsRef.current = pendingTableSections;
+      onSectionsChangeRef.current(pendingTableSections);
+      return;
+    }
+
+    const pendingText = pendingStructuredTextRef.current;
+    if (pendingText === null) return;
+    pendingStructuredTextRef.current = null;
+
+    const parsed = parseSectionsFromStructuredText(pendingText, sectionsRef.current);
+    if (areSectionsEqual(parsed, sectionsRef.current)) return;
+
+    sectionsRef.current = parsed;
+    onSectionsChangeRef.current(parsed);
+  }, []);
+
   const scheduleEditorFlush = useCallback(() => {
     clearFlushTimer();
     flushTimerRef.current = window.setTimeout(() => {
@@ -332,15 +736,33 @@ const BoardPane = memo(function BoardPane({
     }, EDITOR_CHANGE_DEBOUNCE_MS);
   }, [clearFlushTimer, flushPendingEditorUpdate]);
 
+  const scheduleStructuredFlush = useCallback(() => {
+    clearStructuredFlushTimer();
+    structuredFlushTimerRef.current = window.setTimeout(() => {
+      structuredFlushTimerRef.current = null;
+      flushPendingStructuredUpdate();
+    }, STRUCTURED_CHANGE_DEBOUNCE_MS);
+  }, [clearStructuredFlushTimer, flushPendingStructuredUpdate]);
+
+  const queueTableSectionsUpdate = useCallback(
+    (nextTables: EditableTableSection[]) => {
+      const parsedSections = buildSectionsFromEditableTables(nextTables, sectionsRef.current);
+      pendingTableSectionsRef.current = parsedSections;
+      scheduleStructuredFlush();
+    },
+    [scheduleStructuredFlush]
+  );
+
   useEffect(() => {
     return () => {
       clearFlushTimer();
+      clearStructuredFlushTimer();
       if (highlightTimerRef.current !== null) {
         window.clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = null;
       }
     };
-  }, [clearFlushTimer]);
+  }, [clearFlushTimer, clearStructuredFlushTimer]);
 
   const editor = useEditor({
     extensions: [
@@ -348,7 +770,7 @@ const BoardPane = memo(function BoardPane({
         heading: { levels: [1, 2, 3] }
       }),
       Placeholder.configure({
-        placeholder: "从空白页开始：先写标题，再逐步补充小标题和正文..."
+        placeholder: TEMPLATE_PLACEHOLDER.document
       })
     ],
     content: documentHtml,
@@ -376,6 +798,41 @@ const BoardPane = memo(function BoardPane({
 
   useEffect(() => {
     if (!editor) return;
+    editor.setEditable(!readOnly && isDocumentMode);
+  }, [editor, isDocumentMode, readOnly]);
+
+  useEffect(() => {
+    if (previousTemplateRef.current === templateType) return;
+    previousTemplateRef.current = templateType;
+    if (readOnly) return;
+
+    if (isDocumentMode) {
+      if (!editor || editor.isDestroyed) return;
+      const raf = window.requestAnimationFrame(() => {
+        if (!editor.isDestroyed) {
+          editor.chain().focus("end").run();
+        }
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    if (isTableMode) {
+      const firstTable = tableDraft[0];
+      if (!firstTable) return;
+      const firstCell = tableCellRefs.current[buildTableCellKey(firstTable.id, 0, 0)];
+      if (!firstCell) return;
+      const raf = window.requestAnimationFrame(() => firstCell.focus());
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    const textarea = structuredInputRef.current;
+    if (!textarea) return;
+    const raf = window.requestAnimationFrame(() => textarea.focus());
+    return () => window.cancelAnimationFrame(raf);
+  }, [editor, isDocumentMode, isTableMode, readOnly, tableDraft, templateType]);
+
+  useEffect(() => {
+    if (!editor) return;
     const nextHtml = documentHtml || MIN_EDITOR_HTML;
     documentHtmlRef.current = nextHtml;
     pendingHtmlRef.current = null;
@@ -386,33 +843,93 @@ const BoardPane = memo(function BoardPane({
   }, [clearFlushTimer, documentHtml, editor]);
 
   useEffect(() => {
-    if (!editor || !highlightRequest) return;
+    if (isDocumentMode) return;
+    clearStructuredFlushTimer();
+    pendingStructuredTextRef.current = null;
+    pendingTableSectionsRef.current = null;
 
-    const sectionRange = findSectionRangeById(editor.state.doc, sections, highlightRequest.sectionId);
-    if (!sectionRange) return;
+    if (isTableMode) {
+      const nextTables = buildEditableTablesFromSections(sections);
+      setTableDraft((prev) => (areTableSectionsEqual(prev, nextTables) ? prev : nextTables));
+      return;
+    }
 
-    const matched = findTextRangeInSection(
-      editor.state.doc,
-      sectionRange.from,
-      sectionRange.to,
-      highlightRequest.anchorText
-    );
+    setStructuredDraft(buildStructuredTextFromSections(sections));
+  }, [clearStructuredFlushTimer, isDocumentMode, isTableMode, sections]);
 
-    const from = matched?.from ?? sectionRange.from;
-    const to = matched?.to ?? Math.min(sectionRange.to, from + 12);
+  useEffect(() => {
+    if (!highlightRequest) return;
 
-    editor.chain().focus().setTextSelection({ from, to }).scrollIntoView().run();
+    if (isDocumentMode) {
+      if (!editor) return;
+      const sectionRange = findSectionRangeById(editor.state.doc, sections, highlightRequest.sectionId);
+      if (!sectionRange) return;
 
+      const matched = findTextRangeInSection(
+        editor.state.doc,
+        sectionRange.from,
+        sectionRange.to,
+        highlightRequest.anchorText
+      );
+
+      const from = matched?.from ?? sectionRange.from;
+      const to = matched?.to ?? Math.min(sectionRange.to, from + 12);
+
+      editor.chain().focus().setTextSelection({ from, to }).scrollIntoView().run();
+
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      highlightTimerRef.current = window.setTimeout(() => {
+        if (!editor.isDestroyed) {
+          editor.chain().focus().setTextSelection(to).run();
+        }
+        highlightTimerRef.current = null;
+      }, HIGHLIGHT_COLLAPSE_DELAY_MS);
+      return;
+    }
+
+    if (isTableMode) {
+      const targetTable = tableDraft.find((table) => table.id === highlightRequest.sectionId);
+      if (!targetTable) return;
+      const cellPos =
+        findAnchorCellInTable(targetTable, highlightRequest.anchorText) ??
+        (targetTable.rows[0]?.length ? { row: 0, col: 0 } : null);
+      if (!cellPos) return;
+
+      const cell = tableCellRefs.current[buildTableCellKey(targetTable.id, cellPos.row, cellPos.col)];
+      if (!cell) return;
+
+      cell.focus();
+      cell.select();
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      highlightTimerRef.current = window.setTimeout(() => {
+        if (document.activeElement === cell) {
+          const end = cell.value.length;
+          cell.setSelectionRange(end, end);
+        }
+        highlightTimerRef.current = null;
+      }, HIGHLIGHT_COLLAPSE_DELAY_MS);
+      return;
+    }
+
+    const textarea = structuredInputRef.current;
+    if (!textarea) return;
+    const range = findStructuredHighlightRange(textarea.value, sections, highlightRequest);
+    if (!range) return;
+
+    textarea.focus();
+    textarea.setSelectionRange(range.start, range.end);
     if (highlightTimerRef.current !== null) {
       window.clearTimeout(highlightTimerRef.current);
     }
     highlightTimerRef.current = window.setTimeout(() => {
-      if (!editor.isDestroyed) {
-        editor.chain().focus().setTextSelection(to).run();
-      }
+      textarea.setSelectionRange(range.end, range.end);
       highlightTimerRef.current = null;
     }, HIGHLIGHT_COLLAPSE_DELAY_MS);
-  }, [editor, highlightRequest, sections]);
+  }, [editor, highlightRequest, isDocumentMode, isTableMode, sections, tableDraft]);
 
   const getAllContent = useCallback(() => {
     return sections
@@ -454,8 +971,91 @@ const BoardPane = memo(function BoardPane({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [getAllContent]);
+  const handleStructuredChange = useCallback(
+    (value: string) => {
+      setStructuredDraft(value);
+      pendingStructuredTextRef.current = value;
+      scheduleStructuredFlush();
+    },
+    [scheduleStructuredFlush]
+  );
 
-  const toolbarDisabled = !editor;
+  const handleTableTitleChange = useCallback(
+    (tableIndex: number, value: string) => {
+      setTableDraft((prev) => {
+        const next = prev.map((table, index) => (index === tableIndex ? { ...table, title: value } : table));
+        queueTableSectionsUpdate(next);
+        return next;
+      });
+    },
+    [queueTableSectionsUpdate]
+  );
+
+  const handleTableHeaderChange = useCallback(
+    (tableIndex: number, colIndex: number, value: string) => {
+      setTableDraft((prev) => {
+        const next = prev.map((table, index) => {
+          if (index !== tableIndex) return table;
+          const nextHeaders = table.headers.map((header, col) => (col === colIndex ? value : header));
+          return { ...table, headers: nextHeaders };
+        });
+        queueTableSectionsUpdate(next);
+        return next;
+      });
+    },
+    [queueTableSectionsUpdate]
+  );
+
+  const handleTableCellChange = useCallback(
+    (tableIndex: number, rowIndex: number, colIndex: number, value: string) => {
+      setTableDraft((prev) => {
+        const next = prev.map((table, index) => {
+          if (index !== tableIndex) return table;
+          const nextRows = table.rows.map((row, rowCursor) => {
+            if (rowCursor !== rowIndex) return row;
+            return row.map((cell, colCursor) => (colCursor === colIndex ? value : cell));
+          });
+          return { ...table, rows: nextRows };
+        });
+        queueTableSectionsUpdate(next);
+        return next;
+      });
+    },
+    [queueTableSectionsUpdate]
+  );
+
+  const handleAddTableRow = useCallback(
+    (tableIndex: number) => {
+      setTableDraft((prev) => {
+        const next = prev.map((table, index) => {
+          if (index !== tableIndex) return table;
+          const newRow = Array.from({ length: table.headers.length }, () => "");
+          return { ...table, rows: [...table.rows, newRow] };
+        });
+        queueTableSectionsUpdate(next);
+        return next;
+      });
+    },
+    [queueTableSectionsUpdate]
+  );
+
+  const handleAddTableColumn = useCallback(
+    (tableIndex: number) => {
+      setTableDraft((prev) => {
+        const next = prev.map((table, index) => {
+          if (index !== tableIndex) return table;
+          const nextHeaders = [...table.headers, `列${table.headers.length + 1}`];
+          const nextRows = table.rows.map((row) => [...row, ""]);
+          return { ...table, headers: nextHeaders, rows: nextRows };
+        });
+        queueTableSectionsUpdate(next);
+        return next;
+      });
+    },
+    [queueTableSectionsUpdate]
+  );
+
+  const toolbarDisabled = !editor || readOnly || !isDocumentMode;
 
   return (
     <div className="flex h-full flex-col bg-transparent">
@@ -468,105 +1068,61 @@ const BoardPane = memo(function BoardPane({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
-          <ToolbarButton
-            label="H1"
-            ariaLabel="一级标题"
-            icon={<Heading1 className="h-3.5 w-3.5" />}
-            active={editor?.isActive("heading", { level: 1 }) ?? false}
-            onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
-            disabled={toolbarDisabled}
-          />
-          <ToolbarButton
-            label="H2"
-            ariaLabel="二级标题"
-            icon={<Heading2 className="h-3.5 w-3.5" />}
-            active={editor?.isActive("heading", { level: 2 }) ?? false}
-            onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
-            disabled={toolbarDisabled}
-          />
-          <ToolbarButton
-            label="B"
-            ariaLabel="加粗"
-            active={editor?.isActive("bold") ?? false}
-            onClick={() => editor?.chain().focus().toggleBold().run()}
-            disabled={toolbarDisabled}
-          />
-          <ToolbarButton
-            label="I"
-            ariaLabel="斜体"
-            active={editor?.isActive("italic") ?? false}
-            onClick={() => editor?.chain().focus().toggleItalic().run()}
-            disabled={toolbarDisabled}
-          />
-          <ToolbarButton
-            label="列表"
-            ariaLabel="无序列表"
-            active={editor?.isActive("bulletList") ?? false}
-            onClick={() => editor?.chain().focus().toggleBulletList().run()}
-            disabled={toolbarDisabled}
-          />
-          <ToolbarButton
-            label="编号"
-            ariaLabel="有序列表"
-            active={editor?.isActive("orderedList") ?? false}
-            onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-            disabled={toolbarDisabled}
-          />
+          {TEMPLATE_OPTIONS.map((option) => (
+            <ToolbarButton
+              key={option.value}
+              label={option.label}
+              ariaLabel={`切换到${option.label}模板`}
+              active={templateType === option.value}
+              onClick={() => onTemplateTypeChange?.(option.value)}
+              disabled={readOnly || !onTemplateTypeChange}
+            />
+          ))}
+
+          <div className="mx-1 h-4 w-px bg-[var(--border-subtle)]" />
+
+          <ToolbarButton label="H1" ariaLabel="一级标题" icon={<Heading1 className="h-3.5 w-3.5" />} active={editor?.isActive("heading", { level: 1 }) ?? false} onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} disabled={toolbarDisabled} />
+          <ToolbarButton label="H2" ariaLabel="二级标题" icon={<Heading2 className="h-3.5 w-3.5" />} active={editor?.isActive("heading", { level: 2 }) ?? false} onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} disabled={toolbarDisabled} />
+          <ToolbarButton label="B" ariaLabel="加粗" active={editor?.isActive("bold") ?? false} onClick={() => editor?.chain().focus().toggleBold().run()} disabled={toolbarDisabled} />
+          <ToolbarButton label="I" ariaLabel="斜体" active={editor?.isActive("italic") ?? false} onClick={() => editor?.chain().focus().toggleItalic().run()} disabled={toolbarDisabled} />
+          <ToolbarButton label="列表" ariaLabel="无序列表" active={editor?.isActive("bulletList") ?? false} onClick={() => editor?.chain().focus().toggleBulletList().run()} disabled={toolbarDisabled} />
+          <ToolbarButton label="编号" ariaLabel="有序列表" active={editor?.isActive("orderedList") ?? false} onClick={() => editor?.chain().focus().toggleOrderedList().run()} disabled={toolbarDisabled} />
 
           <div className="mx-2 h-4 w-px bg-[var(--border-subtle)]" />
 
-          <button
-            type="button"
-            onClick={onUndo}
-            disabled={!canUndo}
-            aria-label="撤销"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition hover:border-subtle hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40"
-            title="撤销"
-          >
-            <Undo2 className="h-4 w-4 text-secondary" />
-          </button>
-          <button
-            type="button"
-            onClick={onRedo}
-            disabled={!canRedo}
-            aria-label="重做"
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition hover:border-subtle hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40"
-            title="重做"
-          >
-            <Redo2 className="h-4 w-4 text-secondary" />
-          </button>
-          <button
-            type="button"
-            onClick={handleCopy}
-            disabled={sections.length === 0}
-            aria-label="复制全部"
-            className="flex h-8 items-center gap-1.5 rounded-lg px-2 transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40"
-            title="复制全部"
-          >
-            {copySuccess ? (
-              <Check className="h-4 w-4 text-[var(--success)]" />
-            ) : (
-              <Copy className="h-4 w-4 text-secondary" />
-            )}
-            <span className="text-[12px] text-secondary">{copySuccess ? "已复制" : "复制"}</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={sections.length === 0}
-            aria-label="下载 markdown"
-            className="flex h-8 items-center gap-1.5 rounded-lg px-2 transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40"
-            title="下载"
-          >
-            <Download className="h-4 w-4 text-secondary" />
-            <span className="text-[12px] text-secondary">下载</span>
-          </button>
+          <button type="button" onClick={onUndo} disabled={!canUndo || readOnly} aria-label="撤销" className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition hover:border-subtle hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40" title="撤销"><Undo2 className="h-4 w-4 text-secondary" /></button>
+          <button type="button" onClick={onRedo} disabled={!canRedo || readOnly} aria-label="重做" className="flex h-8 w-8 items-center justify-center rounded-lg border border-transparent transition hover:border-subtle hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40" title="重做"><Redo2 className="h-4 w-4 text-secondary" /></button>
+          <button type="button" onClick={handleCopy} disabled={sections.length === 0} aria-label="复制全部" className="flex h-8 items-center gap-1.5 rounded-lg px-2 transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40" title="复制全部">{copySuccess ? <Check className="h-4 w-4 text-[var(--success)]" /> : <Copy className="h-4 w-4 text-secondary" />}<span className="text-[12px] text-secondary">{copySuccess ? "已复制" : "复制"}</span></button>
+          <button type="button" onClick={handleDownload} disabled={sections.length === 0} aria-label="下载 markdown" className="flex h-8 items-center gap-1.5 rounded-lg px-2 transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40" title="下载"><Download className="h-4 w-4 text-secondary" /><span className="text-[12px] text-secondary">下载</span></button>
         </div>
       </div>
 
       <div className="editor-paper-bg flex-1 overflow-y-auto p-4 sm:p-5" aria-label="白板文档区域">
         <div className="mx-auto w-full max-w-[900px] rounded-[20px] border border-subtle bg-[var(--bg-surface)] p-5 shadow-soft sm:min-h-[900px] sm:p-10">
-          <EditorContent editor={editor} aria-label="白板文档编辑器" />
+          {isDocumentMode ? (
+            <EditorContent editor={editor} aria-label="白板文档编辑器" />
+          ) : isTableMode ? (
+            <div className="space-y-4" data-testid="board-table-editor" aria-label="白板表格编辑器">
+              {tableDraft.map((table, tableIndex) => (
+                <section key={table.id} className="rounded-2xl border border-subtle bg-[var(--bg-surface)] p-3.5" aria-label={`表格分区 ${tableIndex + 1}`}>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <input type="text" value={table.title} onChange={(event) => handleTableTitleChange(tableIndex, event.target.value)} readOnly={readOnly} aria-label={`表格标题 ${tableIndex + 1}`} className="h-9 min-w-[220px] rounded-lg border border-subtle bg-[var(--bg-surface)] px-3 text-[13px] font-semibold text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] read-only:cursor-default read-only:opacity-80" />
+                    <button type="button" onClick={() => handleAddTableRow(tableIndex)} disabled={readOnly} aria-label={`为 ${table.title} 添加行`} className="h-8 rounded-lg border border-subtle px-3 text-[12px] font-medium text-secondary transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40">添加行</button>
+                    <button type="button" onClick={() => handleAddTableColumn(tableIndex)} disabled={readOnly} aria-label={`为 ${table.title} 添加列`} className="h-8 rounded-lg border border-subtle px-3 text-[12px] font-medium text-secondary transition hover:bg-[var(--bg-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-40">添加列</button>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-xl border border-subtle">
+                    <table className="min-w-full border-collapse">
+                      <thead><tr>{table.headers.map((header, colIndex) => (<th key={`${table.id}-header-${colIndex}`} className="border-b border-subtle bg-[var(--bg-muted)] p-1.5"><input ref={(node) => { tableCellRefs.current[buildTableCellKey(table.id, -1, colIndex)] = node; }} type="text" value={header} onChange={(event) => handleTableHeaderChange(tableIndex, colIndex, event.target.value)} readOnly={readOnly} aria-label={`${table.title} 表头 ${colIndex + 1}`} className="h-8 w-full rounded-md border border-transparent bg-transparent px-2 text-[12px] font-semibold text-primary outline-none focus-visible:border-subtle focus-visible:bg-[var(--bg-surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] read-only:cursor-default" /></th>))}</tr></thead>
+                      <tbody>{table.rows.map((row, rowIndex) => (<tr key={`${table.id}-row-${rowIndex}`}>{row.map((cell, colIndex) => (<td key={`${table.id}-cell-${rowIndex}-${colIndex}`} className="border-b border-subtle p-1.5 align-top"><input ref={(node) => { tableCellRefs.current[buildTableCellKey(table.id, rowIndex, colIndex)] = node; }} type="text" value={cell} onChange={(event) => handleTableCellChange(tableIndex, rowIndex, colIndex, event.target.value)} readOnly={readOnly} aria-label={`${table.title} 第 ${rowIndex + 1} 行第 ${colIndex + 1} 列`} className="h-8 w-full rounded-md border border-transparent bg-transparent px-2 text-[12px] text-primary outline-none focus-visible:border-subtle focus-visible:bg-[var(--bg-surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] read-only:cursor-default" /></td>))}</tr>))}</tbody>
+                    </table>
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <textarea ref={structuredInputRef} value={structuredDraft} onChange={(event) => handleStructuredChange(event.target.value)} readOnly={readOnly} aria-label="白板文档编辑器" placeholder={TEMPLATE_PLACEHOLDER[templateType]} className={`min-h-[760px] w-full resize-none rounded-xl border border-subtle bg-[var(--bg-surface)] p-4 text-[14px] leading-[1.7] text-primary outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] ${templateType === "code" ? "font-mono" : "font-medium"}`} />
+          )}
         </div>
       </div>
     </div>
@@ -574,4 +1130,3 @@ const BoardPane = memo(function BoardPane({
 });
 
 export default BoardPane;
-

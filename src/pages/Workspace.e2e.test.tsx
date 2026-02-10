@@ -22,14 +22,17 @@ vi.mock("../components/boardPaneLoader", () => ({
     Promise.resolve({
       default: ({
         sections,
-        onUndo
+        onUndo,
+        templateType
       }: {
         sections: Array<{ id: string; title: string; content: string }>;
         onUndo: () => void;
+        templateType?: string;
       }) => (
         <div>
           <div data-testid="mock-board-count">{sections.length}</div>
           <div data-testid="mock-board-content">{sections.map((section) => section.content).join("\n")}</div>
+          <div data-testid="mock-board-template">{templateType ?? "document"}</div>
           <button type="button" onClick={onUndo} aria-label="mock-board-undo">
             undo
           </button>
@@ -73,13 +76,30 @@ describe("Workspace key path e2e", () => {
 
   it("supports send -> stream -> board write -> margin note accept/undo -> export", async () => {
     runAgentStreamMock.mockImplementation(async (_request, callbacks) => {
+      callbacks?.onBoardActionsPreview?.([
+        {
+          action: "set_template",
+          template_type: "table"
+        },
+        {
+          action: "create_structure",
+          section_id: "sec-1",
+          section_title: "目标",
+          content: "预览内容"
+        }
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
       callbacks?.onAssistantDelta?.("这是");
       callbacks?.onAssistantDelta?.("流式回复");
       return {
         assistant_message: "这是流式回复",
         board_actions: [
           {
-            action: "create_structure",
+            action: "set_template",
+            template_type: "table"
+          },
+          {
+            action: "update_section",
             section_id: "sec-1",
             section_title: "目标",
             content: "初稿内容"
@@ -101,6 +121,11 @@ describe("Workspace key path e2e", () => {
     const input = await screen.findByLabelText("输入消息");
     fireEvent.change(input, { target: { value: "请帮我起草方案" } });
     fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-board-template").textContent).toBe("table");
+      expect(screen.getByTestId("mock-board-content").textContent).toContain("预览内容");
+    });
 
     await waitFor(() => {
       expect(screen.getByText("这是流式回复")).toBeTruthy();

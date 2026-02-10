@@ -43,6 +43,7 @@ function createLargeSnapshot(): PersistedWorkspaceState {
         }
       ]
     })),
+    boardTemplate: "document",
     errorState: {
       hasError: false,
       errorType: null,

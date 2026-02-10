@@ -179,17 +179,40 @@ describe("ChatPane", () => {
     expect(screen.queryByText(/A\.\s*A\./)).toBeNull();
   });
 
-  it("renders rubric and margin notes for assistant message", () => {
+  it("uses globally increasing labels across multiple structured questions", () => {
+    render(
+      <ChatPane
+        messages={[
+          assistantMessage("continue", {
+            nextQuestions: [
+              {
+                question: "first group",
+                options: ["A. goal", "B. audience"]
+              },
+              {
+                question: "second group",
+                options: ["A. timeline", "B. risk"]
+              }
+            ]
+          })
+        ]}
+        isAiTyping={false}
+        onSendMessage={vi.fn()}
+        onPinToBoard={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("A. goal")).toBeTruthy();
+    expect(screen.getByText("B. audience")).toBeTruthy();
+    expect(screen.getByText("C. timeline")).toBeTruthy();
+    expect(screen.getByText("D. risk")).toBeTruthy();
+  });
+
+  it("renders margin notes for assistant message", () => {
     render(
       <ChatPane
         messages={[
           assistantMessage("这是本轮建议。", {
-            rubric: {
-              total: 82,
-              dimensions: {
-                clarity: { score: 84, reason: "结构清晰" }
-              }
-            },
             marginNotes: [
               {
                 comment: "开场白还可以更具体",
@@ -204,7 +227,6 @@ describe("ChatPane", () => {
       />
     );
 
-    expect(screen.getByText("质量评分 · 82")).toBeTruthy();
     expect(screen.getByText("批注建议")).toBeTruthy();
     expect(screen.getByText("开场白还可以更具体")).toBeTruthy();
   });

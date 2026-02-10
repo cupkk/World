@@ -1,3 +1,5 @@
+export type BoardTemplateType = "document" | "table" | "code";
+
 export type AgentMessage = {
   role: "user" | "assistant";
   content: string;
@@ -11,16 +13,18 @@ export type AgentBoardSection = {
 };
 
 export type AgentBoardAction = {
-  action: "create_structure" | "update_section" | "append_section" | "clear_section";
+  action: "create_structure" | "update_section" | "append_section" | "clear_section" | "set_template";
   section_id?: string;
   section_title?: string;
   content?: string;
+  template_type?: BoardTemplateType;
 };
 
 export type AgentRunRequest = {
   session_id: string;
   messages: AgentMessage[];
   board_sections: AgentBoardSection[];
+  board_template?: BoardTemplateType;
 };
 
 export type AgentRunResponse = {
@@ -33,16 +37,6 @@ export type AgentRunResponse = {
     question: string;
     options?: string[];
   }>;
-  rubric?: {
-    total?: number;
-    dimensions?: Record<
-      string,
-      {
-        score?: number;
-        reason?: string;
-      }
-    >;
-  };
   margin_notes?: Array<{
     anchor?: string;
     comment: string;

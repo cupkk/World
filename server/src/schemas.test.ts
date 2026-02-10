@@ -15,7 +15,8 @@ test("request schema validates normal payload", () => {
   const result = requestSchema.safeParse({
     session_id: "session-a",
     messages: [{ role: "user", content: "hello" }],
-    board_sections: [{ id: "s1", title: "T1", content: "C1" }]
+    board_sections: [{ id: "s1", title: "T1", content: "C1" }],
+    board_template: "document"
   });
   assert.equal(result.success, true);
 });
@@ -39,24 +40,19 @@ test("response schema enforces board action invariants", () => {
 
   const valid = AgentRunResponseSchema.safeParse({
     assistant_message: "ok",
-    board_actions: [{ action: "append_section", section_title: "S", content: "value" }],
-    next_questions: [{ question: "需要补充目标用户吗？", options: ["是", "否"] }],
-    rubric: {
-      total: 76,
-      dimensions: {
-        clarity: { score: 78, reason: "结构清晰" }
-      }
-    },
-    margin_notes: [{ comment: "建议补充数据依据", suggestion: "增加一段数据来源说明" }]
+    board_actions: [
+      { action: "set_template", template_type: "table" },
+      { action: "append_section", section_title: "S", content: "value" }
+    ],
+    next_questions: [{ question: "Need more target audience details?", options: ["yes", "no"] }],
+    margin_notes: [{ comment: "Add supporting data", suggestion: "Add one data source paragraph" }]
   });
   assert.equal(valid.success, true);
 
-  const invalidRubric = AgentRunResponseSchema.safeParse({
+  const invalidTemplateSwitch = AgentRunResponseSchema.safeParse({
     assistant_message: "ok",
-    board_actions: [],
-    rubric: {
-      total: 120
-    }
+    board_actions: [{ action: "set_template" }]
   });
-  assert.equal(invalidRubric.success, false);
+  assert.equal(invalidTemplateSwitch.success, false);
 });
+

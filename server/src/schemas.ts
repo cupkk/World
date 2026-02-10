@@ -2,10 +2,11 @@ import { z } from "zod";
 
 const BoardActionSchema = z
   .object({
-    action: z.enum(["create_structure", "update_section", "append_section", "clear_section"]),
+    action: z.enum(["create_structure", "update_section", "append_section", "clear_section", "set_template"]),
     section_id: z.string().min(1).optional(),
     section_title: z.string().min(1).optional(),
-    content: z.string().optional()
+    content: z.string().optional(),
+    template_type: z.enum(["document", "table", "code"]).optional()
   })
   .superRefine((value, ctx) => {
     const hasTarget = Boolean(value.section_id || value.section_title);
@@ -30,6 +31,13 @@ const BoardActionSchema = z
         message: "append_section requires non-empty content"
       });
     }
+
+    if (value.action === "set_template" && !value.template_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "set_template requires template_type"
+      });
+    }
   });
 
 const NextQuestionSchema = z.object({
@@ -39,20 +47,6 @@ const NextQuestionSchema = z.object({
   question: z.string().min(1),
   options: z.array(z.string().min(1)).max(6).optional()
 });
-
-const RubricDimensionSchema = z
-  .object({
-    score: z.number().min(0).max(100).optional(),
-    reason: z.string().min(1).optional()
-  })
-  .strict();
-
-const RubricSchema = z
-  .object({
-    total: z.number().min(0).max(100).optional(),
-    dimensions: z.record(RubricDimensionSchema).optional()
-  })
-  .strict();
 
 const MarginNoteSchema = z
   .object({
@@ -67,7 +61,6 @@ export const AgentRunResponseSchema = z.object({
   assistant_message: z.string().min(1),
   board_actions: z.array(BoardActionSchema).default([]),
   next_questions: z.array(NextQuestionSchema).max(6).default([]),
-  rubric: RubricSchema.optional(),
   margin_notes: z.array(MarginNoteSchema).max(20).default([])
 });
 

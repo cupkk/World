@@ -30,7 +30,8 @@ export function createAgentRequestSchema(limits: Limits) {
             source: z.enum(["ai", "user", "pinned"]).optional()
           })
         )
-        .max(limits.maxBoardSections)
+        .max(limits.maxBoardSections),
+      board_template: z.enum(["document", "table", "code"]).optional()
     })
     .strict();
 }

@@ -1,4 +1,4 @@
-import type { AgentMarginNote, AgentNextQuestion, AgentRubric, BoardAction } from "../types/workspace";
+import type { AgentMarginNote, AgentNextQuestion, BoardAction, BoardTemplateType } from "../types/workspace";
 
 export type AgentMessage = {
   role: "user" | "assistant";
@@ -16,12 +16,12 @@ export type AgentRunRequest = {
   session_id: string;
   messages: AgentMessage[];
   board_sections: AgentBoardSection[];
+  board_template?: BoardTemplateType;
 };
 
 export type AgentRunResponse = {
   assistant_message: string;
   board_actions: BoardAction[];
   next_questions?: AgentNextQuestion[];
-  rubric?: AgentRubric;
   margin_notes?: AgentMarginNote[];
 };

@@ -7,7 +7,7 @@ import { logger } from "../../../server/src/logger.js";
 import { FixedWindowRateLimiter } from "../../../server/src/rateLimit.js";
 import { createAgentRequestSchema } from "../../../server/src/requestSchemas.js";
 import { AgentRunResponseSchema } from "../../../server/src/schemas.js";
-import { extractAssistantMessageFromJsonPrefix } from "../../../server/src/streaming.js";
+import { extractAssistantMessageFromJsonPrefix, extractBoardActionsFromJsonPrefix } from "../../../server/src/streaming.js";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
@@ -225,6 +225,7 @@ export default async function handler(req: any, res: any) {
 
     let assistantSnapshot = "";
     let lastEmittedLength = 0;
+    let lastBoardActionsPreviewSignature = "";
 
     try {
       const messages = [
@@ -241,10 +242,20 @@ export default async function handler(req: any, res: any) {
         onToken: (token) => {
           assistantSnapshot += token;
           const partialText = extractAssistantMessageFromJsonPrefix(assistantSnapshot);
-          if (partialText.length <= lastEmittedLength) return;
-          const delta = partialText.slice(lastEmittedLength);
-          lastEmittedLength = partialText.length;
-          writeSseEvent(res, "assistant_delta", { delta });
+          if (partialText.length > lastEmittedLength) {
+            const delta = partialText.slice(lastEmittedLength);
+            lastEmittedLength = partialText.length;
+            writeSseEvent(res, "assistant_delta", { delta });
+          }
+
+          const boardActionsPreview = extractBoardActionsFromJsonPrefix(assistantSnapshot);
+          if (boardActionsPreview.length > 0) {
+            const signature = JSON.stringify(boardActionsPreview);
+            if (signature !== lastBoardActionsPreviewSignature) {
+              lastBoardActionsPreviewSignature = signature;
+              writeSseEvent(res, "board_actions_preview", { board_actions: boardActionsPreview });
+            }
+          }
         }
       });
 

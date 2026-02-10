@@ -9,6 +9,7 @@ import type {
   WorkspaceState,
   ChatMessage,
   BoardSection,
+  BoardTemplateType,
   TextSelection,
   BoardHighlightRequest
 } from "../types/workspace";
@@ -27,6 +28,7 @@ import {
   makeId,
   normalizeAgentError,
   pushUndoSnapshot,
+  resolveBoardTemplateTypeFromActions,
   syncDocumentTitle
 } from "./workspaceCore";
 
@@ -37,6 +39,11 @@ const STREAM_FLUSH_INTERVAL_MS = 80;
 const STORAGE_DEBOUNCE_MS = 650;
 const STORAGE_IDLE_TIMEOUT_MS = 1200;
 const BoardPane = lazy(() => loadBoardPane());
+
+type StreamBoardPreview = {
+  sections: BoardSection[];
+  template: BoardTemplateType;
+};
 
 function appendAssistantDelta(messages: ChatMessage[], assistantMessageId: string, chunk: string): ChatMessage[] {
   const lastIndex = messages.length - 1;
@@ -245,6 +252,10 @@ export default function DualPaneWorkspace() {
             sessionId: queryTaskId || parsed.sessionId || base.sessionId,
             chatMessages: Array.isArray(parsed.chatMessages) ? parsed.chatMessages : [],
             boardSections: Array.isArray(parsed.boardSections) ? syncDocumentTitle(parsed.boardSections) : [],
+            boardTemplate:
+              parsed.boardTemplate === "document" || parsed.boardTemplate === "table" || parsed.boardTemplate === "code"
+                ? parsed.boardTemplate
+                : base.boardTemplate,
             undoStack: Array.isArray(parsed.undoStack) ? parsed.undoStack : [],
             redoStack: Array.isArray(parsed.redoStack) ? parsed.redoStack : [],
             errorState: {
@@ -274,6 +285,7 @@ export default function DualPaneWorkspace() {
   const [isMobile, setIsMobile] = useState(false);
   const [activeHint, setActiveHint] = useState<InlineHint | null>(null);
   const [boardHighlightRequest, setBoardHighlightRequest] = useState<BoardHighlightRequest | null>(null);
+  const [streamBoardPreview, setStreamBoardPreview] = useState<StreamBoardPreview | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -378,12 +390,31 @@ export default function DualPaneWorkspace() {
     });
   }, [activeHint, state]);
 
+  const updateStreamBoardPreview = useCallback(
+    (baseSections: BoardSection[], baseTemplate: BoardTemplateType, boardActions: AgentRunResponse["board_actions"]) => {
+      const previewResult = applyBoardActions(baseSections, boardActions ?? []);
+      const previewTemplate = resolveBoardTemplateTypeFromActions(baseTemplate, boardActions ?? []);
+      setStreamBoardPreview((prev) => {
+        const next: StreamBoardPreview = {
+          sections: previewResult.sections,
+          template: previewTemplate
+        };
+        if (prev && prev.template === next.template && areBoardSectionsEqual(prev.sections, next.sections)) {
+          return prev;
+        }
+        return next;
+      });
+    },
+    []
+  );
+
   const finalizeAgentSuccess = useCallback(
     ({
       assistantMessageId,
       response,
       source,
       baseBoardSections,
+      baseBoardTemplate,
       taskId,
       conversationTurnCount
     }: {
@@ -391,24 +422,27 @@ export default function DualPaneWorkspace() {
       response: AgentRunResponse;
       source: "ai_sync" | "retry_sync";
       baseBoardSections: BoardSection[];
+      baseBoardTemplate: BoardTemplateType;
       taskId: string;
       conversationTurnCount: number;
     }) => {
       const preview = applyBoardActions(baseBoardSections, response.board_actions ?? []);
-      if (preview.didChange) {
-        const rubricTotal = typeof response.rubric?.total === "number" ? response.rubric.total : undefined;
+      const previewTemplate = resolveBoardTemplateTypeFromActions(baseBoardTemplate, response.board_actions ?? []);
+      const templateChanged = previewTemplate !== baseBoardTemplate;
+      if (preview.didChange || templateChanged) {
         track("draft_generated", {
           task_id: taskId,
           source,
           conversation_turn_count: conversationTurnCount,
           board_char_count: getBoardCharCount(preview.sections),
-          board_section_count: preview.sections.length,
-          ...(rubricTotal !== undefined ? { rubric_total: rubricTotal } : {})
+          board_section_count: preview.sections.length
         });
       }
+      setStreamBoardPreview(null);
 
       setState((prev) => {
         const result = applyBoardActions(prev.boardSections, response.board_actions ?? []);
+        const nextTemplate = resolveBoardTemplateTypeFromActions(prev.boardTemplate, response.board_actions ?? []);
         const shouldSnapshot = result.didChange;
         const nextMessage: ChatMessage = {
           id: assistantMessageId,
@@ -417,7 +451,6 @@ export default function DualPaneWorkspace() {
           timestamp: Date.now(),
           boardActions: response.board_actions,
           nextQuestions: response.next_questions,
-          rubric: response.rubric ?? null,
           marginNotes: response.margin_notes
         };
 
@@ -430,6 +463,7 @@ export default function DualPaneWorkspace() {
           ...prev,
           chatMessages,
           boardSections: result.sections,
+          boardTemplate: nextTemplate,
           undoStack: shouldSnapshot
             ? pushUndoSnapshot(prev.undoStack, getBoardContent(prev.boardSections))
             : prev.undoStack,
@@ -500,6 +534,7 @@ export default function DualPaneWorkspace() {
         errorState: { ...prev.errorState, hasError: false, errorType: null, message: "" }
       }));
       setActiveHint(null);
+      setStreamBoardPreview(null);
 
       try {
         const response = await runAgentStream(request, {
@@ -514,6 +549,9 @@ export default function DualPaneWorkspace() {
             }
             bufferedDelta += delta;
             scheduleFlush();
+          },
+          onBoardActionsPreview: (boardActions) => {
+            updateStreamBoardPreview(baseState.boardSections, baseState.boardTemplate, boardActions);
           }
         });
 
@@ -524,12 +562,14 @@ export default function DualPaneWorkspace() {
           response,
           source: "ai_sync",
           baseBoardSections: baseState.boardSections,
+          baseBoardTemplate: baseState.boardTemplate,
           taskId: baseState.sessionId,
           conversationTurnCount: nextMessages.length + 1
         });
       } catch (streamErr) {
         clearFlushTimer();
         flushAssistantDelta();
+        setStreamBoardPreview(null);
         try {
           const response = await runAgent(request);
           finalizeAgentSuccess({
@@ -537,6 +577,7 @@ export default function DualPaneWorkspace() {
             response,
             source: "ai_sync",
             baseBoardSections: baseState.boardSections,
+            baseBoardTemplate: baseState.boardTemplate,
             taskId: baseState.sessionId,
             conversationTurnCount: nextMessages.length + 1
           });
@@ -562,7 +603,7 @@ export default function DualPaneWorkspace() {
         }
       }
     },
-    [finalizeAgentSuccess]
+    [finalizeAgentSuccess, updateStreamBoardPreview]
   );
 
   const handlePinToBoard = useCallback((messageId: string, selection?: TextSelection) => {
@@ -694,6 +735,17 @@ export default function DualPaneWorkspace() {
     });
   }, []);
 
+  const handleBoardTemplateChange = useCallback((template: BoardTemplateType) => {
+    setStreamBoardPreview(null);
+    setState((prev) => {
+      if (prev.boardTemplate === template) return prev;
+      return {
+        ...prev,
+        boardTemplate: template
+      };
+    });
+  }, []);
+
   const handleUndo = useCallback(() => {
     setState((prev) => {
       if (prev.undoStack.length === 0) return prev;
@@ -774,6 +826,7 @@ export default function DualPaneWorkspace() {
         errorState: { ...prev.errorState, hasError: false, errorType: null, message: "" }
       }));
       setActiveHint(null);
+      setStreamBoardPreview(null);
 
       try {
         const response = await runAgentStream(request, {
@@ -788,6 +841,9 @@ export default function DualPaneWorkspace() {
             }
             bufferedDelta += delta;
             scheduleFlush();
+          },
+          onBoardActionsPreview: (boardActions) => {
+            updateStreamBoardPreview(baseState.boardSections, baseState.boardTemplate, boardActions);
           }
         });
 
@@ -798,12 +854,14 @@ export default function DualPaneWorkspace() {
           response,
           source: "retry_sync",
           baseBoardSections: baseState.boardSections,
+          baseBoardTemplate: baseState.boardTemplate,
           taskId: baseState.sessionId,
           conversationTurnCount: baseState.chatMessages.length + 1
         });
       } catch (streamErr) {
         clearFlushTimer();
         flushAssistantDelta();
+        setStreamBoardPreview(null);
         try {
           const response = await runAgent(request);
           finalizeAgentSuccess({
@@ -811,6 +869,7 @@ export default function DualPaneWorkspace() {
             response,
             source: "retry_sync",
             baseBoardSections: baseState.boardSections,
+            baseBoardTemplate: baseState.boardTemplate,
             taskId: baseState.sessionId,
             conversationTurnCount: baseState.chatMessages.length + 1
           });
@@ -836,7 +895,7 @@ export default function DualPaneWorkspace() {
         }
       }
     },
-    [finalizeAgentSuccess]
+    [finalizeAgentSuccess, updateStreamBoardPreview]
   );
 
   const handleDismissError = useCallback(() => {
@@ -877,6 +936,7 @@ export default function DualPaneWorkspace() {
     lastEditSnapshotRef.current = { sectionId: "", at: 0 };
     setActiveHint(null);
     setBoardHighlightRequest(null);
+    setStreamBoardPreview(null);
     track("task_created", {
       task_id: next.sessionId,
       source: "workspace_new_session"
@@ -886,6 +946,8 @@ export default function DualPaneWorkspace() {
   const canUndo = state.undoStack.length > 0;
   const canRedo = state.redoStack.length > 0;
   const userTurnCount = state.chatMessages.filter((message) => message.role === "user").length;
+  const boardSectionsForRender = streamBoardPreview?.sections ?? state.boardSections;
+  const boardTemplateForRender = streamBoardPreview?.template ?? state.boardTemplate;
 
   const MobileHeader = (
     <div className="flex h-16 items-center justify-end border-b border-subtle bg-[var(--bg-surface)] px-4">
@@ -955,12 +1017,15 @@ export default function DualPaneWorkspace() {
               <div className="flex-1 overflow-hidden">
                 <Suspense fallback={<BoardPaneFallback />}>
                   <BoardPane
-                    sections={state.boardSections}
+                    sections={boardSectionsForRender}
                     onSectionsChange={handleBoardSectionsChange}
                     onUndo={handleUndo}
                     onRedo={handleRedo}
                     canUndo={canUndo}
                     canRedo={canRedo}
+                    templateType={boardTemplateForRender}
+                    onTemplateTypeChange={handleBoardTemplateChange}
+                    readOnly={state.isAiTyping}
                     highlightRequest={boardHighlightRequest}
                   />
                 </Suspense>
@@ -1087,12 +1152,15 @@ export default function DualPaneWorkspace() {
           <div className="flex-1 overflow-hidden">
             <Suspense fallback={<BoardPaneFallback />}>
               <BoardPane
-                sections={state.boardSections}
+                sections={boardSectionsForRender}
                 onSectionsChange={handleBoardSectionsChange}
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 canUndo={canUndo}
                 canRedo={canRedo}
+                templateType={boardTemplateForRender}
+                onTemplateTypeChange={handleBoardTemplateChange}
+                readOnly={state.isAiTyping}
                 highlightRequest={boardHighlightRequest}
               />
             </Suspense>

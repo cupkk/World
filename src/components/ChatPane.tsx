@@ -71,6 +71,13 @@ function stripOptionPrefix(value: string) {
   return value.replace(OPTION_PREFIX_PATTERN, "").trim();
 }
 
+function buildOptionLabelByIndex(index: number) {
+  if (index >= 0 && index < 26) {
+    return String.fromCharCode(65 + index);
+  }
+  return `${index + 1}`;
+}
+
 function buildQuickOptionsFromStructured(message: ChatMessage): AssistantOption[] {
   const questions = message.nextQuestions ?? [];
   if (!questions.length) return [];
@@ -89,9 +96,9 @@ function buildQuickOptionsFromStructured(message: ChatMessage): AssistantOption[
         const key = normalized.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
-        const optionLabel = String.fromCharCode(65 + optionIndex);
+        const optionLabel = buildOptionLabelByIndex(options.length);
         options.push({
-          key: `structured-${questionIndex}-${optionIndex}`,
+          key: `structured-${questionIndex}-${optionIndex}-${optionLabel}`,
           label: `${optionLabel}. ${normalized}`,
           content: normalized
         });
@@ -166,9 +173,6 @@ const MessageBubble = memo(function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const [showPinButton, setShowPinButton] = useState(false);
-  const rubricDimensions = message.rubric?.dimensions
-    ? Object.entries(message.rubric.dimensions).slice(0, 4)
-    : [];
   const marginNotes = message.marginNotes?.filter((note) => note.comment.trim()).slice(0, 3) ?? [];
 
   const handlePin = useCallback(() => {
@@ -201,29 +205,8 @@ const MessageBubble = memo(function MessageBubble({
       >
         <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-inherit">{message.content}</div>
 
-        {!isUser && (message.rubric || marginNotes.length > 0) ? (
+        {!isUser && marginNotes.length > 0 ? (
           <div className="mt-3 space-y-2 rounded-xl border border-subtle bg-[var(--bg-muted)] p-2.5">
-            {message.rubric ? (
-              <div aria-label="质量评分摘要" role="group">
-                <div className="text-[11px] font-semibold text-secondary">
-                  质量评分
-                  {typeof message.rubric.total === "number" ? ` · ${message.rubric.total}` : ""}
-                </div>
-                {rubricDimensions.length > 0 ? (
-                  <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                    {rubricDimensions.map(([name, value]) => (
-                      <div key={name} className="rounded-lg border border-subtle bg-[var(--bg-surface)] px-2 py-1.5">
-                        <div className="text-[10px] font-medium text-secondary">{name}</div>
-                        <div className="mt-0.5 text-[11px] font-semibold text-primary">
-                          {typeof value.score === "number" ? `${value.score}` : "—"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             {marginNotes.length > 0 ? (
               <div aria-label="批注建议" role="group">
                 <div className="text-[11px] font-semibold text-secondary">批注建议</div>

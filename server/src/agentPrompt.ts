@@ -1,4 +1,4 @@
-import type { AgentBoardSection, AgentMessage, AgentRunRequest } from "./agentProtocol";
+﻿import type { AgentBoardSection, AgentMessage, AgentRunRequest } from "./agentProtocol";
 
 export type PromptBuildOptions = {
   maxMessages: number;
@@ -16,7 +16,7 @@ export const DEFAULT_PROMPT_BUILD_OPTIONS: PromptBuildOptions = {
 
 function truncateText(value: string, maxChars: number) {
   if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 15))} …[truncated]`;
+  return `${value.slice(0, Math.max(0, maxChars - 15))} ...[truncated]`;
 }
 
 function pickRecentMessages(messages: AgentMessage[], maxMessages: number) {
@@ -43,7 +43,8 @@ export function preparePromptContext(req: AgentRunRequest, options: PromptBuildO
   return {
     sessionId: req.session_id,
     messages,
-    boardSections
+    boardSections,
+    boardTemplate: req.board_template ?? "document"
   };
 }
 
@@ -78,18 +79,21 @@ export function buildAgentSystemPrompt() {
     "- update_section: replace section content (use section_id or section_title).",
     "- append_section: append to existing section (use section_id or section_title).",
     "- clear_section: clear content of a section.",
+    '- set_template: switch board template using {"action":"set_template","template_type":"document|table|code"}.',
+    "- Use table mode for matrix/comparison/SWOT-like tasks. Use code mode for coding/debugging tasks.",
+    "- Keep template switching rare: only when task type clearly changes or current mode is wrong.",
     "",
     "Output JSON shape:",
     "{",
     '  "assistant_message": "...",',
     '  "board_actions": [',
+    '    {"action":"set_template","template_type":"document|table|code"},',
     '    {"action":"create_structure|update_section|append_section|clear_section","section_id":"...","section_title":"...","content":"..."}',
     "  ],",
     '  "next_questions": [{"question":"...", "options":["...","..."]}],',
-    '  "rubric": {"total": 0-100, "dimensions": {"clarity":{"score":0-100,"reason":"..."}}},',
     '  "margin_notes": [{"anchor":"section_id or text span", "comment":"...", "suggestion":"..."}]',
     "}",
-    "(next_questions/rubric/margin_notes are optional, but useful when confidence is low or quality gaps are obvious.)",
+    "(next_questions/margin_notes are optional, but useful when confidence is low or quality gaps are obvious.)",
     "",
     "assistant_message must be natural Chinese, concise, and must push the conversation forward."
   ].join("\n");
@@ -111,6 +115,8 @@ export function buildAgentUserPrompt(req: AgentRunRequest, options: PromptBuildO
     "",
     "Conversation so far:",
     history || "(empty)",
+    "",
+    `Current board template: ${context.boardTemplate}`,
     "",
     "Current board sections:",
     boardSummary || "(empty)",

@@ -1,11 +1,19 @@
 import type { AgentClientError } from "../ai/agentClient";
 import type { AgentRunRequest } from "../ai/agentProtocol";
-import type { BoardAction, BoardContent, BoardSection, ChatMessage, WorkspaceState } from "../types/workspace";
+import type {
+  BoardAction,
+  BoardContent,
+  BoardSection,
+  BoardTemplateType,
+  ChatMessage,
+  WorkspaceState
+} from "../types/workspace";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
 
 export const HTML_TAG_PATTERN = /<([a-z][\w-]*)(\s[^>]*)?>/i;
 export const UNDO_STACK_LIMIT = 80;
 export const DEFAULT_DOCUMENT_TITLE = "未命名标题";
+export const DEFAULT_BOARD_TEMPLATE: BoardTemplateType = "document";
 
 export type InlineHintReason = "kickoff" | "short_answer" | "missing_context";
 
@@ -40,6 +48,7 @@ export function defaultWorkspaceState(seed?: { taskId?: string }): WorkspaceStat
     sessionId,
     chatMessages: [],
     boardSections: [],
+    boardTemplate: DEFAULT_BOARD_TEMPLATE,
     undoStack: [],
     redoStack: [],
     isAiTyping: false,
@@ -284,6 +293,10 @@ export function applyBoardActions(sections: BoardSection[], actions: BoardAction
   const now = Date.now();
 
   actions.forEach((action) => {
+    if (action.action === "set_template") {
+      return;
+    }
+
     const title = action.section_title?.trim();
     const rawContent = action.content ?? "";
     const content = HTML_TAG_PATTERN.test(rawContent.trim()) ? sanitizeHtml(rawContent) : rawContent;
@@ -391,10 +404,31 @@ export function applyBoardActions(sections: BoardSection[], actions: BoardAction
   return { sections: normalizedSections, didChange: didChange || normalizedChanged };
 }
 
+function normalizeBoardTemplateType(value: unknown): BoardTemplateType | null {
+  if (value === "document" || value === "table" || value === "code") return value;
+  return null;
+}
+
+export function resolveBoardTemplateTypeFromActions(
+  current: BoardTemplateType,
+  actions: BoardAction[]
+): BoardTemplateType {
+  let nextTemplate = current;
+  for (const action of actions) {
+    if (action.action !== "set_template") continue;
+    const candidate = normalizeBoardTemplateType(action.template_type);
+    if (candidate) {
+      nextTemplate = candidate;
+    }
+  }
+  return nextTemplate;
+}
+
 export function buildAgentRequest(state: WorkspaceState, nextMessages: ChatMessage[]): AgentRunRequest {
   return {
     session_id: state.sessionId,
     messages: nextMessages.map((msg) => ({ role: msg.role, content: msg.content })),
+    board_template: state.boardTemplate,
     board_sections: state.boardSections.map((section) => ({
       id: section.id,
       title: section.title,

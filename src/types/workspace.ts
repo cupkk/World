@@ -1,5 +1,7 @@
 // Types for Dual-Pane Workspace
 
+export type BoardTemplateType = "document" | "table" | "code";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -7,15 +9,15 @@ export interface ChatMessage {
   timestamp: number;
   boardActions?: BoardAction[];
   nextQuestions?: AgentNextQuestion[];
-  rubric?: AgentRubric | null;
   marginNotes?: AgentMarginNote[];
 }
 
 export interface BoardAction {
-  action: "create_structure" | "update_section" | "append_section" | "clear_section";
+  action: "create_structure" | "update_section" | "append_section" | "clear_section" | "set_template";
   section_id?: string;
   section_title?: string;
   content?: string;
+  template_type?: BoardTemplateType;
 }
 
 export interface AgentNextQuestion {
@@ -24,16 +26,6 @@ export interface AgentNextQuestion {
   type?: string;
   question: string;
   options?: string[];
-}
-
-export interface AgentRubricDimension {
-  score?: number;
-  reason?: string;
-}
-
-export interface AgentRubric {
-  total?: number;
-  dimensions?: Record<string, AgentRubricDimension>;
 }
 
 export interface AgentMarginNote {
@@ -75,6 +67,7 @@ export interface WorkspaceState {
   sessionId: string;
   chatMessages: ChatMessage[];
   boardSections: BoardSection[];
+  boardTemplate: BoardTemplateType;
   undoStack: BoardContent[];
   redoStack: BoardContent[];
   isAiTyping: boolean;
@@ -96,6 +89,7 @@ export interface SessionState {
   updatedAt: number;
   chatMessages: ChatMessage[];
   boardSections: BoardSection[];
+  boardTemplate: BoardTemplateType;
   metadata: {
     messageCount: number;
     boardWordCount: number;

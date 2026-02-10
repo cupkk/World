@@ -2,7 +2,7 @@ import type { BoardContent, BoardSection, ChatMessage, WorkspaceState } from "..
 
 export type PersistedWorkspaceState = Pick<
   WorkspaceState,
-  "sessionId" | "chatMessages" | "boardSections" | "undoStack" | "redoStack" | "errorState"
+  "sessionId" | "chatMessages" | "boardSections" | "boardTemplate" | "undoStack" | "redoStack" | "errorState"
 >;
 
 type CompactProfile = "normal" | "aggressive" | "minimal";
@@ -87,7 +87,6 @@ function compactChatMessages(messages: ChatMessage[], limits: SnapshotLimits) {
       question: clampText(item.question, 300),
       options: item.options?.slice(0, 4).map((option) => clampText(option, 120))
     })),
-    rubric: message.rubric ?? null,
     marginNotes: message.marginNotes?.slice(0, 6).map((note) => ({
       ...note,
       anchor: note.anchor ? clampText(note.anchor, 120) : note.anchor,
@@ -103,6 +102,7 @@ export function createPersistedSnapshot(state: WorkspaceState): PersistedWorkspa
     sessionId: state.sessionId,
     chatMessages: state.chatMessages,
     boardSections: state.boardSections,
+    boardTemplate: state.boardTemplate,
     undoStack: state.undoStack,
     redoStack: state.redoStack,
     errorState: state.errorState
@@ -120,6 +120,7 @@ export function compactPersistedSnapshot(
     sessionId: snapshot.sessionId,
     chatMessages: compactChatMessages(snapshot.chatMessages, limits),
     boardSections,
+    boardTemplate: snapshot.boardTemplate,
     undoStack: compactBoardContent(snapshot.undoStack, limits),
     redoStack: compactBoardContent(snapshot.redoStack.slice(-limits.redoStack), {
       ...limits,

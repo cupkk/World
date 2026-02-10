@@ -8,6 +8,7 @@ import {
   defaultWorkspaceState,
   normalizeAgentError,
   pushUndoSnapshot,
+  resolveBoardTemplateTypeFromActions,
   syncDocumentTitle
 } from "./workspaceCore";
 
@@ -244,6 +245,29 @@ describe("applyBoardActions", () => {
     expect(content).not.toContain("javascript:");
     expect(content).not.toContain("onclick");
     expect(content).toContain("hello");
+  });
+
+  it("ignores set_template action when mutating sections", () => {
+    const result = applyBoardActions([section()], [{ action: "set_template", template_type: "code" }]);
+    expect(result.didChange).toBe(false);
+    expect(result.sections[0]?.content).toBe("初始内容");
+  });
+});
+
+describe("resolveBoardTemplateTypeFromActions", () => {
+  it("keeps current template when no switch action exists", () => {
+    const next = resolveBoardTemplateTypeFromActions("document", [
+      { action: "append_section", section_title: "A", content: "B" }
+    ]);
+    expect(next).toBe("document");
+  });
+
+  it("applies last set_template action in a batch", () => {
+    const next = resolveBoardTemplateTypeFromActions("document", [
+      { action: "set_template", template_type: "table" },
+      { action: "set_template", template_type: "code" }
+    ]);
+    expect(next).toBe("code");
   });
 });
 

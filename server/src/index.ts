@@ -10,7 +10,7 @@ import { logger } from "./logger";
 import { createRateLimitMiddleware, FixedWindowRateLimiter } from "./rateLimit";
 import { createAgentRequestSchema } from "./requestSchemas";
 import { AgentRunResponseSchema } from "./schemas";
-import { extractAssistantMessageFromJsonPrefix } from "./streaming";
+import { extractAssistantMessageFromJsonPrefix, extractBoardActionsFromJsonPrefix } from "./streaming";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const STRICT_JSON_HINT =
@@ -256,6 +256,7 @@ app.post("/api/ai/agent/stream", createRateLimitMiddleware(limiter), async (req,
 
   let assistantSnapshot = "";
   let lastEmittedLength = 0;
+  let lastBoardActionsPreviewSignature = "";
   try {
     const { parsed } = await callDeepSeekJsonStreamRaw({
       apiKey: config.deepseekApiKey,
@@ -266,10 +267,20 @@ app.post("/api/ai/agent/stream", createRateLimitMiddleware(limiter), async (req,
       onToken: (token) => {
         assistantSnapshot += token;
         const partialText = extractAssistantMessageFromJsonPrefix(assistantSnapshot);
-        if (partialText.length <= lastEmittedLength) return;
-        const delta = partialText.slice(lastEmittedLength);
-        lastEmittedLength = partialText.length;
-        writeSseEvent(res, "assistant_delta", { delta });
+        if (partialText.length > lastEmittedLength) {
+          const delta = partialText.slice(lastEmittedLength);
+          lastEmittedLength = partialText.length;
+          writeSseEvent(res, "assistant_delta", { delta });
+        }
+
+        const boardActionsPreview = extractBoardActionsFromJsonPrefix(assistantSnapshot);
+        if (boardActionsPreview.length > 0) {
+          const signature = JSON.stringify(boardActionsPreview);
+          if (signature !== lastBoardActionsPreviewSignature) {
+            lastBoardActionsPreviewSignature = signature;
+            writeSseEvent(res, "board_actions_preview", { board_actions: boardActionsPreview });
+          }
+        }
       }
     });
 
