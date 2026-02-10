@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ExportPage from "./Export";
@@ -118,7 +118,7 @@ describe("Workspace key path e2e", () => {
 
     renderWorkspace();
 
-    const input = await screen.findByLabelText("输入消息");
+    const input = await screen.findByRole("textbox");
     fireEvent.change(input, { target: { value: "请帮我起草方案" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
@@ -198,7 +198,7 @@ describe("Workspace key path e2e", () => {
     await waitFor(() => expect(document.activeElement).toBe(boardHeading));
   });
 
-  it("adds per-question options with examples when next_questions miss options", async () => {
+  it("keeps assistant message concise and renders fallback options in question panel", async () => {
     runAgentStreamMock.mockResolvedValue({
       assistant_message: "好的，我先问三个关键问题，帮助你聚焦。",
       board_actions: [],
@@ -216,10 +216,10 @@ describe("Workspace key path e2e", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => {
-      expect(screen.getByText(/你可参考以下选项回答：/)).toBeTruthy();
-      expect(screen.getByText(/A\. 提升业务指标（示例：/)).toBeTruthy();
-      expect(screen.getByText(/A\. B端企业角色（示例：/)).toBeTruthy();
-      expect(screen.getByText(/A\. 文档方案（示例：/)).toBeTruthy();
+      expect(screen.queryByText(/你可参考以下选项回答：/)).toBeNull();
+      expect(screen.getByText(/A\. 提升业务指标/)).toBeTruthy();
+      expect(screen.getByText(/A\. B端企业角色/)).toBeTruthy();
+      expect(screen.getByText(/A\. 文档方案/)).toBeTruthy();
       expect(screen.queryByText(/^A\.\s*A$/)).toBeNull();
     });
   });

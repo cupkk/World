@@ -177,11 +177,6 @@ function setMarginNoteAccepted(messages: ChatMessage[], messageId: string, noteI
   });
 }
 
-type QuestionOptionExample = {
-  label: string;
-  example: string;
-};
-
 function sanitizeQuestionText(question: string) {
   return question.trim().replace(/^\d+\s*[.)、．]\s*/, "").trim();
 }
@@ -197,90 +192,52 @@ function isPlaceholderQuestionOption(value: string) {
   return /^[A-Da-d1-4]$/.test(value.trim());
 }
 
-function pickQuestionOptionExamples(question: string): QuestionOptionExample[] {
+function pickQuestionOptionLabels(question: string): string[] {
   const q = question.toLowerCase();
 
   if (/(核心|问题|需求|痛点|解决)/.test(q)) {
-    return [
-      { label: "提升业务指标", example: "3个月内注册转化率提升20%" },
-      { label: "解决流程效率", example: "将处理时长从2天缩短到4小时" },
-      { label: "验证想法可行性", example: "验证新功能是否值得上线" },
-      { label: "其他（请补充）", example: "降低客服投诉率或退款率" }
-    ];
+    return ["提升业务指标", "解决流程效率", "验证想法可行性", "其他（请补充）"];
   }
 
   if (/(用户|受众|对象|面向|人群)/.test(q)) {
-    return [
-      { label: "B端企业角色", example: "连锁门店运营负责人" },
-      { label: "C端个人用户", example: "18-30岁内容消费用户" },
-      { label: "内部协作团队", example: "销售、客服、运营团队" },
-      { label: "其他（请补充）", example: "特定行业或地区人群" }
-    ];
+    return ["B端企业角色", "C端个人用户", "内部协作团队", "其他（请补充）"];
   }
 
   if (/(成果|结果|交付|形式|产出)/.test(q)) {
-    return [
-      { label: "文档方案", example: "可直接汇报的PPT大纲+执行计划" },
-      { label: "结构化清单", example: "里程碑、资源、风险列表" },
-      { label: "可执行产物", example: "原型、脚本或代码草案" },
-      { label: "其他（请补充）", example: "会议纪要、邮件草稿等" }
-    ];
+    return ["文档方案", "结构化清单", "可执行产物", "其他（请补充）"];
   }
 
-  return [
-    { label: "先做方案框架", example: "先给3-5步执行路径" },
-    { label: "先明确关键约束", example: "预算、时间、人力边界" },
-    { label: "先定义成功标准", example: "用1-2个可量化指标衡量" },
-    { label: "其他（请补充）", example: "你当前最关心的问题" }
-  ];
+  return ["先做方案框架", "先明确关键约束", "先定义成功标准", "其他（请补充）"];
 }
 
 function enrichNextQuestionsWithExamples(nextQuestions?: AgentNextQuestion[]) {
   if (!nextQuestions?.length) {
     return {
-      normalizedNextQuestions: nextQuestions,
-      exampleBlock: ""
+      normalizedNextQuestions: nextQuestions
     };
   }
 
   const normalized: AgentNextQuestion[] = [];
-  const lines: string[] = [];
 
-  nextQuestions.forEach((item, questionIndex) => {
+  nextQuestions.forEach((item) => {
     const question = sanitizeQuestionText(item.question ?? "");
     if (!question) return;
 
-    const templates = pickQuestionOptionExamples(question);
+    const templates = pickQuestionOptionLabels(question);
     const providedOptions = (item.options ?? [])
       .map(normalizeOptionText)
       .filter((option) => option && !isPlaceholderQuestionOption(option));
-    const optionLabels = (providedOptions.length ? providedOptions : templates.map((entry) => entry.label)).slice(0, 4);
+    const optionLabels = (providedOptions.length ? providedOptions : templates).slice(0, 4);
 
     normalized.push({
       ...item,
       question,
       options: optionLabels
     });
-
-    lines.push(`${questionIndex + 1}. ${question}`);
-    optionLabels.forEach((option, optionIndex) => {
-      const letter = String.fromCharCode(65 + optionIndex);
-      const fallbackExample = templates[optionIndex]?.example ?? "请补充你的实际场景";
-      lines.push(`${letter}. ${option}（示例：${fallbackExample}）`);
-    });
-    lines.push("");
   });
 
-  if (!normalized.length) {
-    return {
-      normalizedNextQuestions: nextQuestions,
-      exampleBlock: ""
-    };
-  }
-
   return {
-    normalizedNextQuestions: normalized,
-    exampleBlock: ["", "你可参考以下选项回答：", ...lines].join("\n").trimEnd()
+    normalizedNextQuestions: normalized.length ? normalized : nextQuestions
   };
 }
 
@@ -552,15 +509,11 @@ export default function DualPaneWorkspace() {
         const result = applyBoardActions(prev.boardSections, response.board_actions ?? []);
         const nextTemplate = resolveBoardTemplateTypeFromActions(prev.boardTemplate, response.board_actions ?? []);
         const shouldSnapshot = result.didChange;
-        const { normalizedNextQuestions, exampleBlock } = enrichNextQuestionsWithExamples(response.next_questions);
-        const assistantMessageText =
-          exampleBlock && !/示例[:：]/.test(response.assistant_message)
-            ? `${response.assistant_message.trim()}\n\n${exampleBlock}`
-            : response.assistant_message;
+        const { normalizedNextQuestions } = enrichNextQuestionsWithExamples(response.next_questions);
         const nextMessage: ChatMessage = {
           id: assistantMessageId,
           role: "assistant",
-          content: assistantMessageText,
+          content: response.assistant_message,
           timestamp: Date.now(),
           boardActions: response.board_actions,
           nextQuestions: normalizedNextQuestions,
