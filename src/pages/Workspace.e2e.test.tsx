@@ -197,4 +197,30 @@ describe("Workspace key path e2e", () => {
     fireEvent.keyDown(window, { key: "2", altKey: true });
     await waitFor(() => expect(document.activeElement).toBe(boardHeading));
   });
+
+  it("adds per-question options with examples when next_questions miss options", async () => {
+    runAgentStreamMock.mockResolvedValue({
+      assistant_message: "好的，我先问三个关键问题，帮助你聚焦。",
+      board_actions: [],
+      next_questions: [
+        { question: "这个项目的核心要解决什么问题或满足什么需求？" },
+        { question: "主要面向的用户或受众是谁？" },
+        { question: "期望的最终成果是什么形式（如报告、产品、方案等）？" }
+      ]
+    });
+
+    renderWorkspace("/canvas?task_id=task-options&new=1");
+
+    const input = await screen.findByRole("textbox");
+    fireEvent.change(input, { target: { value: "我还比较模糊" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(screen.getByText(/你可参考以下选项回答：/)).toBeTruthy();
+      expect(screen.getByText(/A\. 提升业务指标（示例：/)).toBeTruthy();
+      expect(screen.getByText(/A\. B端企业角色（示例：/)).toBeTruthy();
+      expect(screen.getByText(/A\. 文档方案（示例：/)).toBeTruthy();
+      expect(screen.queryByText(/^A\.\s*A$/)).toBeNull();
+    });
+  });
 });
