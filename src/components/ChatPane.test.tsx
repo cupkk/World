@@ -208,6 +208,33 @@ describe("ChatPane", () => {
     expect(screen.getByText("D. risk")).toBeTruthy();
   });
 
+  it("falls back to parsing assistant text when structured options are placeholder letters only", () => {
+    render(
+      <ChatPane
+        messages={[
+          assistantMessage(
+            "1. 您希望这次讨论或项目的主要产出是什么？\nA. 一份具体的计划或方案\nB. 一个决策或建议\nC. 一个创意或概念\nD. 其他（请补充）",
+            {
+              nextQuestions: [
+                {
+                  question: "您希望这次讨论或项目的主要产出是什么？",
+                  options: ["A", "B", "C", "D"]
+                }
+              ]
+            }
+          )
+        ]}
+        isAiTyping={false}
+        onSendMessage={vi.fn()}
+        onPinToBoard={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("A. 一份具体的计划或方案")).toBeTruthy();
+    expect(screen.getByText("B. 一个决策或建议")).toBeTruthy();
+    expect(screen.queryByText("A. A")).toBeNull();
+  });
+
   it("renders margin notes for assistant message", () => {
     render(
       <ChatPane

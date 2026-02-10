@@ -71,6 +71,10 @@ function stripOptionPrefix(value: string) {
   return value.replace(OPTION_PREFIX_PATTERN, "").trim();
 }
 
+function isPlaceholderStructuredOption(value: string) {
+  return /^[A-Da-d1-4]$/.test(value.trim());
+}
+
 function buildOptionLabelByIndex(index: number) {
   if (index >= 0 && index < 26) {
     return String.fromCharCode(65 + index);
@@ -93,6 +97,7 @@ function buildQuickOptionsFromStructured(message: ChatMessage): AssistantOption[
       candidates.forEach((optionText, optionIndex) => {
         const normalized = stripOptionPrefix(optionText);
         if (!normalized) return;
+        if (isPlaceholderStructuredOption(normalized)) return;
         const key = normalized.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
