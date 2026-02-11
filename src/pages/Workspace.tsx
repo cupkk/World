@@ -40,6 +40,7 @@ const STREAM_FLUSH_INTERVAL_MS = 80;
 const STORAGE_DEBOUNCE_MS = 650;
 const STORAGE_IDLE_TIMEOUT_MS = 1200;
 const BoardPane = lazy(() => loadBoardPane());
+const LEGACY_OPTIONS_MARKER = "你可参考以下选项回答：";
 
 type StreamBoardPreview = {
   sections: BoardSection[];
@@ -83,6 +84,28 @@ function nowPerfMs() {
     return performance.now();
   }
   return Date.now();
+}
+
+function stripLegacyAssistantOptionBlock(content: string) {
+  const markerIndex = content.indexOf(LEGACY_OPTIONS_MARKER);
+  if (markerIndex < 0) return content;
+  const prefix = content.slice(0, markerIndex).trimEnd();
+  return prefix.length > 0 ? prefix : content;
+}
+
+function sanitizeLegacyAssistantMessages(messages: ChatMessage[]) {
+  let changed = false;
+  const normalized = messages.map((message) => {
+    if (message.role !== "assistant") return message;
+    const nextContent = stripLegacyAssistantOptionBlock(message.content);
+    if (nextContent === message.content) return message;
+    changed = true;
+    return {
+      ...message,
+      content: nextContent
+    };
+  });
+  return { normalized, changed };
 }
 
 function parseMarginAnchor(anchor?: string): { sectionId?: string; text?: string; raw?: string } {
@@ -306,16 +329,28 @@ export default function DualPaneWorkspace() {
   const [state, setState] = useState<WorkspaceState>(() => {
     const base = defaultWorkspaceState({ taskId: queryTaskId || undefined });
 
-    if (!forceNew) {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored) as Partial<WorkspaceState>;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<WorkspaceState>;
+        const rawMessages = Array.isArray(parsed.chatMessages) ? parsed.chatMessages : [];
+        const { normalized, changed } = sanitizeLegacyAssistantMessages(rawMessages);
+        if (changed) {
+          localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+              ...parsed,
+              chatMessages: normalized
+            })
+          );
+        }
+
+        if (!forceNew) {
           return {
             ...base,
             ...parsed,
             sessionId: queryTaskId || parsed.sessionId || base.sessionId,
-            chatMessages: Array.isArray(parsed.chatMessages) ? parsed.chatMessages : [],
+            chatMessages: normalized,
             boardSections: Array.isArray(parsed.boardSections) ? syncDocumentTitle(parsed.boardSections) : [],
             boardTemplate:
               parsed.boardTemplate === "document" || parsed.boardTemplate === "table" || parsed.boardTemplate === "code"
@@ -329,9 +364,9 @@ export default function DualPaneWorkspace() {
             }
           };
         }
-      } catch {
-        // ignore parse errors
       }
+    } catch {
+      // ignore parse errors
     }
 
     return base;

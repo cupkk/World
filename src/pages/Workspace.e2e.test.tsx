@@ -223,4 +223,45 @@ describe("Workspace key path e2e", () => {
       expect(screen.queryByText(/^A\.\s*A$/)).toBeNull();
     });
   });
+
+  it("migrates legacy stored assistant option block from history", async () => {
+    localStorage.setItem(
+      "ai-world-workspace-v2",
+      JSON.stringify({
+        sessionId: "task-legacy",
+        chatMessages: [
+          {
+            id: "legacy-assistant",
+            role: "assistant",
+            content:
+              "这是历史消息正文。\n\n你可参考以下选项回答：\n1. 请回答以上问题\nA. 方案一\nB. 方案二",
+            timestamp: Date.now()
+          }
+        ],
+        boardSections: [],
+        boardTemplate: "document",
+        undoStack: [],
+        redoStack: [],
+        isAiTyping: false,
+        errorState: {
+          hasError: false,
+          errorType: null,
+          message: "",
+          retryCount: 0,
+          lastErrorTime: 0,
+          isOfflineMode: false
+        }
+      })
+    );
+
+    renderWorkspace("/canvas?task_id=task-legacy");
+
+    await screen.findByText("这是历史消息正文。");
+    expect(screen.queryByText(/你可参考以下选项回答：/)).toBeNull();
+
+    await waitFor(() => {
+      const snapshot = localStorage.getItem("ai-world-workspace-v2") ?? "";
+      expect(snapshot).not.toContain("你可参考以下选项回答：");
+    });
+  });
 });
