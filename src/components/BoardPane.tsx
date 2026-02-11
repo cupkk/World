@@ -46,6 +46,14 @@ type EditableTableSection = {
   rows: string[][];
 };
 
+const DEFAULT_TABLE_HEADERS = ["维度", "现状", "目标", "动作"] as const;
+const TABLE_COLUMN_HINTS: Array<ReadonlyArray<string>> = [
+  ["维度", "主题", "模块", "对象", "受众", "目标用户", "场景", "领域", "类别", "方向", "任务", "问题"],
+  ["现状", "当前", "进展", "状态", "背景", "问题描述", "痛点", "约束", "限制"],
+  ["目标", "期望", "结果", "产出", "指标", "成功标准", "里程碑"],
+  ["动作", "行动", "下一步", "计划", "策略", "建议", "措施", "执行"]
+];
+
 function makeSectionId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -142,6 +150,101 @@ function normalizeTableRows(rows: string[][], colCount: number) {
   });
 }
 
+function stripLinePrefix(value: string) {
+  return value
+    .replace(/^[-*•]\s+/, "")
+    .replace(/^\d+[.)、]\s+/, "")
+    .trim();
+}
+
+function mergeCell(current: string, incoming: string) {
+  const nextValue = incoming.trim();
+  if (!nextValue) return current;
+  if (!current.trim()) return nextValue;
+  if (current.includes(nextValue)) return current;
+  return `${current}；${nextValue}`;
+}
+
+function resolveTableColumnIndex(label: string) {
+  const normalized = label.trim().toLowerCase();
+  if (!normalized) return -1;
+  for (let col = 0; col < TABLE_COLUMN_HINTS.length; col += 1) {
+    if (TABLE_COLUMN_HINTS[col].some((hint) => normalized.includes(hint.toLowerCase()))) {
+      return col;
+    }
+  }
+  return -1;
+}
+
+function parseFallbackTableRows(raw: string, fallbackDimension: string): string[][] {
+  const lines = raw
+    .split("\n")
+    .map((line) => stripLinePrefix(line))
+    .filter(Boolean);
+
+  if (!lines.length) return [["", "", "", ""]];
+
+  const rows: string[][] = [];
+  let current = ["", "", "", ""];
+
+  const flush = () => {
+    if (!current.some((cell) => cell.trim())) return;
+    rows.push([...current]);
+    current = ["", "", "", ""];
+  };
+
+  for (const line of lines) {
+    const segments = line
+      .split(/[；;]+/)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    let handled = false;
+
+    for (const segment of segments) {
+      const match = segment.match(/^([^：:]{1,24})[：:]\s*(.+)$/);
+      if (!match) continue;
+      handled = true;
+      const label = match[1]?.trim() ?? "";
+      const value = (match[2] ?? "").trim();
+      const colIndex = resolveTableColumnIndex(label);
+
+      if (colIndex === 0) {
+        if (current[0] && (current[1] || current[2] || current[3])) flush();
+        current[0] = mergeCell(current[0], value || label);
+        continue;
+      }
+
+      if (colIndex > 0) {
+        if (!current[0]) current[0] = fallbackDimension;
+        current[colIndex] = mergeCell(current[colIndex], value);
+        continue;
+      }
+
+      if (current[0] && (current[1] || current[2] || current[3])) flush();
+      current[0] = mergeCell(current[0], label);
+      current[1] = mergeCell(current[1], value);
+    }
+
+    if (handled) continue;
+    if (!current[0]) {
+      current[0] = line;
+      continue;
+    }
+    if (!current[1]) {
+      current[1] = line;
+      continue;
+    }
+    if (!current[2]) {
+      current[2] = line;
+      continue;
+    }
+    current[3] = mergeCell(current[3], line);
+  }
+
+  flush();
+  return rows.length > 0 ? rows : [[raw.trim(), "", "", ""]];
+}
+
 function parseEditableTableFromSection(section: BoardSection, index: number): EditableTableSection {
   const plain = htmlToPlainText(section.content).replace(/\r\n/g, "\n");
   const lines = plain
@@ -170,8 +273,8 @@ function parseEditableTableFromSection(section: BoardSection, index: number): Ed
   return {
     id: section.id,
     title: normalizeTitle(section.title, index),
-    headers: ["维度", "现状", "目标", "动作"],
-    rows: [[plain.trim(), "", "", ""]]
+    headers: [...DEFAULT_TABLE_HEADERS],
+    rows: normalizeTableRows(parseFallbackTableRows(plain.trim(), normalizeTitle(section.title, index)), DEFAULT_TABLE_HEADERS.length)
   };
 }
 
@@ -181,7 +284,7 @@ function buildEditableTablesFromSections(sections: BoardSection[]) {
       {
         id: makeSectionId(),
         title: "分析表",
-        headers: ["维度", "现状", "目标", "动作"],
+        headers: [...DEFAULT_TABLE_HEADERS],
         rows: [["", "", "", ""]]
       }
     ] satisfies EditableTableSection[];
