@@ -11,11 +11,52 @@ datasource db {
 }
 
 model User {
-  id           Int                 @id @default(autoincrement())
-  username     String              @unique
-  passwordHash String
-  documents    WorkspaceDocument[]
-  createdAt    DateTime            @default(now())
+  id             Int                  @id @default(autoincrement())
+  username       String               @unique
+  email          String?              @unique
+  passwordHash   String?              // Null for OAuth-only users
+  documents      WorkspaceDocument[]
+  refreshTokens  RefreshToken[]
+  resetTokens    PasswordResetToken[]
+  oauthAccounts  OAuthAccount[]
+  createdAt      DateTime             @default(now())
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  code      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OAuthAccount {
+  id         String   @id @default(uuid())
+  provider   String   // "github" | "google"
+  providerId String   // The provider's user ID
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@index([userId])
 }
 
 model WorkspaceDocument {
@@ -27,4 +68,3 @@ model WorkspaceDocument {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-

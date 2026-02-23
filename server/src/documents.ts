@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { prisma } from "./db";
-import { authenticateToken, type AuthenticatedRequest } from "./auth";
+import { authenticateToken } from "./auth";
 
 export const documentsRouter = Router();
 
 // Get a specific document by session ID
-documentsRouter.get("/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+documentsRouter.get("/:id", authenticateToken as any, async (req: any, res: any) => {
   try {
     const documentId = req.params["id"];
+    const authUser = req.user as { userId: number; username: string };
     
     if (!documentId) {
       res.status(400).json({ error: { code: "INVALID_REQUEST", message: "Missing document ID" } });
@@ -24,7 +25,7 @@ documentsRouter.get("/:id", authenticateToken, async (req: AuthenticatedRequest,
     }
 
     // Ensure the document belongs to the requesting user
-    if (document.userId !== req.user!.userId) {
+    if (document.userId !== authUser.userId) {
       res.status(403).json({ error: { code: "FORBIDDEN", message: "Access denied" } });
       return;
     }
@@ -36,10 +37,11 @@ documentsRouter.get("/:id", authenticateToken, async (req: AuthenticatedRequest,
 });
 
 // Update or create a document by session ID
-documentsRouter.put("/:id", authenticateToken, async (req: AuthenticatedRequest, res) => {
+documentsRouter.put("/:id", authenticateToken as any, async (req: any, res: any) => {
   try {
     const documentId = req.params["id"];
     const { title, content } = req.body;
+    const authUser = req.user as { userId: number; username: string };
     
     if (!documentId) {
       res.status(400).json({ error: { code: "INVALID_REQUEST", message: "Missing document ID" } });
@@ -53,7 +55,7 @@ documentsRouter.put("/:id", authenticateToken, async (req: AuthenticatedRequest,
 
     // Check if document exists to verify ownership before updating
     const existing = await prisma.workspaceDocument.findUnique({ where: { id: documentId } });
-    if (existing && existing.userId !== req.user!.userId) {
+    if (existing && existing.userId !== authUser.userId) {
       res.status(403).json({ error: { code: "FORBIDDEN", message: "Access denied" } });
       return;
     }
@@ -67,7 +69,7 @@ documentsRouter.put("/:id", authenticateToken, async (req: AuthenticatedRequest,
       },
       create: {
         id: documentId,
-        userId: req.user!.userId,
+        userId: authUser.userId,
         title: title || "未命名文档",
         content,
       },

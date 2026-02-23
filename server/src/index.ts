@@ -13,6 +13,8 @@ import { AgentRunResponseSchema } from "./schemas";
 import { extractAssistantMessageFromJsonPrefix, extractBoardActionsFromJsonPrefix } from "./streaming";
 import { authRouter } from "./auth";
 import { documentsRouter } from "./documents";
+import { oauthRouter } from "./oauth";
+import passport from "passport";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const STRICT_JSON_HINT =
@@ -122,8 +124,10 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
   next(err);
 });
 
-// Auth and Documents API
+// Auth, OAuth and Documents API
+app.use(passport.initialize());
 app.use("/api/auth", authRouter);
+app.use("/api/auth", oauthRouter);
 app.use("/api/documents", documentsRouter);
 
 app.get("/api/health", (_req, res) => {
