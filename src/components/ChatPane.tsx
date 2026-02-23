@@ -32,6 +32,7 @@ type SpeechRecognitionResultLike = {
 };
 
 type SpeechRecognitionEventLike = {
+  resultIndex: number;
   results: ArrayLike<SpeechRecognitionResultLike>;
 };
 
@@ -40,7 +41,7 @@ type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: any) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
@@ -508,10 +509,12 @@ const ChatPane = memo(function ChatPane({
 
   useEffect(() => {
     return () => {
-      try {
-        recognitionRef.current?.abort();
-      } catch {
-        // ignore recognition cleanup error
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {
+          // ignore cleanup error
+        }
       }
     };
   }, []);
@@ -521,11 +524,14 @@ const ChatPane = memo(function ChatPane({
   }, [questionPanelMessageId]);
 
   const stopVoiceInput = useCallback(() => {
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      // ignore
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
     }
+    setIsListening(false);
   }, []);
 
   const startVoiceInput = useCallback(() => {
@@ -536,24 +542,40 @@ const ChatPane = memo(function ChatPane({
       const recognition = new Recognition();
       recognitionRef.current = recognition;
       recognition.lang = "zh-CN";
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
 
+      let finalTranscript = inputValue;
+
       recognition.onresult = (event) => {
-        let transcript = "";
-        for (let i = 0; i < event.results.length; i += 1) {
-          const alternative = event.results[i]?.[0];
-          if (alternative?.transcript) {
-            transcript = alternative.transcript;
+        let interimTranscript = "";
+        let newFinalPart = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          if (!result) continue;
+          
+          const alternative = result[0];
+          if (!alternative?.transcript) continue;
+
+          if (result.isFinal) {
+            newFinalPart += alternative.transcript;
+          } else {
+            interimTranscript += alternative.transcript;
           }
         }
 
-        if (!transcript.trim()) return;
-        setInputValue((prev) => appendTranscript(prev, transcript));
+        if (newFinalPart) {
+          finalTranscript = appendTranscript(finalTranscript, newFinalPart);
+        }
+
+        const combined = appendTranscript(finalTranscript, interimTranscript);
+        setInputValue(combined);
       };
 
-      recognition.onerror = () => {
-        setIsListening(false);
+      recognition.onerror = (e: any) => {
+        console.error("Speech recognition error", e);
+        stopVoiceInput();
       };
 
       recognition.onend = () => {
@@ -562,10 +584,11 @@ const ChatPane = memo(function ChatPane({
 
       recognition.start();
       setIsListening(true);
-    } catch {
+    } catch (e) {
+      console.error("Failed to start speech recognition", e);
       setIsListening(false);
     }
-  }, [isAiTyping, isListening]);
+  }, [isAiTyping, isListening, inputValue, stopVoiceInput]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = inputValue.trim();
@@ -822,19 +845,38 @@ const ChatPane = memo(function ChatPane({
           </section>
         ) : null}
 
-        {quickOptions.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="快速选项">
-            {quickOptions.map((option) => (
+        {quickOptions.length > 0 || inputValue.trim().length > 10 ? (
+          <div className="mb-2 flex items-center justify-between gap-4">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="快速选项">
+              {quickOptions.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => handleOptionSelect(option)}
+                  disabled={isAiTyping}
+                  className="chip px-3 py-1.5 text-[12px] transition hover:bg-[var(--bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            {inputValue.trim().length > 10 ? (
               <button
-                key={option.key}
                 type="button"
-                onClick={() => handleOptionSelect(option)}
+                onClick={() => {
+                  setInputValue((prev) => `请帮我整理并润色以下杂乱的输入内容，使其变得条理清晰，剔除口语化表达（请直接输出排版后的最终结果）：\n\n${prev}`);
+                  window.requestAnimationFrame(() => inputRef.current?.focus());
+                }}
                 disabled={isAiTyping}
-                className="chip px-3 py-1.5 text-[12px] transition hover:bg-[var(--bg-muted)] disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="使用 AI 自动润色当前文本"
+                title="当语音输入较乱时，一键自动梳理"
+                className="shrink-0 flex items-center gap-1.5 rounded-full border border-[var(--accent-strong)]/30 bg-white px-2.5 py-1 text-[11px] font-medium text-[var(--accent-strong)] shadow-sm transition hover:bg-[var(--accent-strong)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-brand)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {option.label}
+                <Sparkles className="h-3 w-3" />
+                AI 去除口语化
               </button>
-            ))}
+            ) : null}
           </div>
         ) : null}
 

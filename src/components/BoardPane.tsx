@@ -3,9 +3,16 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { Copy, Download, Undo2, Redo2, Check, Heading1, Heading2 } from "lucide-react";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { common, createLowlight } from "lowlight";
+import "highlight.js/styles/github-dark.css";
+import { Copy, Download, Undo2, Redo2, Check, Heading1, Heading2, Code, Network, LayoutGrid } from "lucide-react";
 import type { BoardHighlightRequest, BoardSection, BoardTemplateType } from "../types/workspace";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
+import { MermaidExtension } from "./extensions/MermaidExtension";
+import { SWOTExtension } from "./extensions/SWOTExtension";
+
+const lowlight = createLowlight(common);
 
 interface BoardPaneProps {
   sections: BoardSection[];
@@ -872,6 +879,11 @@ const BoardPane = memo(function BoardPane({
       StarterKit.configure({
         heading: { levels: [1, 2, 3] }
       }),
+      CodeBlockLowlight.configure({
+        lowlight
+      }),
+      MermaidExtension,
+      SWOTExtension,
       Placeholder.configure({
         placeholder: TEMPLATE_PLACEHOLDER.document
       })

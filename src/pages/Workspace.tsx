@@ -1,6 +1,7 @@
 ﻿import { Suspense, lazy, startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, FileText, Plus, Sparkles, AlertTriangle, RotateCcw, X, Home } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { api } from "../api";
 import ChatPane from "../components/ChatPane";
 import { loadBoardPane } from "../components/boardPaneLoader";
 import { runAgent, runAgentStream } from "../ai/agentClient";
@@ -392,6 +393,24 @@ export default function DualPaneWorkspace() {
   }, [state]);
 
   useEffect(() => {
+    let mounted = true;
+    if (api.isLoggedIn() && state.sessionId && !forceNew) {
+      api.getDocument(state.sessionId).then((cloudDoc) => {
+        if (mounted && cloudDoc) {
+          setState((prev) => {
+            // Very naive conflict resolution: if cloud has more chat messages, assume it's more complete
+            if (cloudDoc.chatMessages.length > prev.chatMessages.length) {
+              return { ...prev, ...cloudDoc };
+            }
+            return prev;
+          });
+        }
+      });
+    }
+    return () => { mounted = false; };
+  }, [state.sessionId, forceNew]);
+
+  useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
     };
@@ -410,6 +429,7 @@ export default function DualPaneWorkspace() {
     let idleHandle: number | null = null;
     const persist = () => {
       persistWorkspaceSnapshot(localStorage, STORAGE_KEY, snapshot);
+      api.saveDocument(snapshot.sessionId, snapshot.boardSections[0]?.title || "未命名文档", snapshot);
     };
 
     const timer = window.setTimeout(() => {

@@ -1,0 +1,30 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           Int                 @id @default(autoincrement())
+  username     String              @unique
+  passwordHash String
+  documents    WorkspaceDocument[]
+  createdAt    DateTime            @default(now())
+}
+
+model WorkspaceDocument {
+  id        String   @id // The sessionId from the frontend
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  title     String   @default("未命名文档")
+  content   String   // Stringified JSON containing the serialized WorkspaceState
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+

@@ -7,10 +7,12 @@ import { buildAgentSystemPrompt, buildAgentUserPrompt } from "./agentPrompt";
 import { loadConfig } from "./config";
 import { callDeepSeekJsonRaw, callDeepSeekJsonStreamRaw } from "./deepseek";
 import { logger } from "./logger";
-import { createRateLimitMiddleware, FixedWindowRateLimiter } from "./rateLimit";
+import { createRateLimitMiddleware, FixedWindowRateLimiter, RedisRateLimiter, type RateLimiter } from "./rateLimit";
 import { createAgentRequestSchema } from "./requestSchemas";
 import { AgentRunResponseSchema } from "./schemas";
 import { extractAssistantMessageFromJsonPrefix, extractBoardActionsFromJsonPrefix } from "./streaming";
+import { authRouter } from "./auth";
+import { documentsRouter } from "./documents";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const STRICT_JSON_HINT =
@@ -67,7 +69,11 @@ function buildCorsOptions(origins: "*" | string[]): cors.CorsOptions {
 
 const config = loadConfig();
 const app = express();
-const limiter = new FixedWindowRateLimiter(config.rateLimit.windowMs, config.rateLimit.maxRequests);
+
+const limiter: RateLimiter = config.redisUrl 
+  ? new RedisRateLimiter(config.redisUrl, config.rateLimit.windowMs, config.rateLimit.maxRequests)
+  : new FixedWindowRateLimiter(config.rateLimit.windowMs, config.rateLimit.maxRequests);
+
 const agentRequestSchema = createAgentRequestSchema(config.limits);
 const corsOptions = buildCorsOptions(config.corsOrigins);
 
@@ -115,6 +121,10 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
   }
   next(err);
 });
+
+// Auth and Documents API
+app.use("/api/auth", authRouter);
+app.use("/api/documents", documentsRouter);
 
 app.get("/api/health", (_req, res) => {
   res.json({

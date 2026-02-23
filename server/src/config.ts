@@ -12,6 +12,7 @@ const BoolFromEnv = z.preprocess((value) => {
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(8787),
+  REDIS_URL: z.string().url().optional(),
 
   DEEPSEEK_API_KEY: z.string().trim().min(1).optional(),
   AI_MODEL_PRIMARY: z.enum(["deepseek-reasoner", "deepseek-chat"]).default("deepseek-reasoner"),
@@ -56,6 +57,7 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env) {
   return {
     nodeEnv: env.NODE_ENV,
     port: env.PORT,
+    redisUrl: env.REDIS_URL,
     trustProxy: env.TRUST_PROXY,
     corsOrigins: parseCorsOrigins(env.CORS_ORIGINS),
 
