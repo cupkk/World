@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 import cors from "cors";
 import "dotenv/config";
 import express from "express";
@@ -14,7 +16,10 @@ import { extractAssistantMessageFromJsonPrefix, extractBoardActionsFromJsonPrefi
 import { authRouter } from "./auth";
 import { documentsRouter } from "./documents";
 import { oauthRouter } from "./oauth";
+import { uploadRouter } from "./upload";
 import passport from "passport";
+import { createCollaborationServer } from "./collaboration";
+import { initAiTaskQueue, submitAiTask, getTaskProgress, taskEvents, type AiTaskProgress } from "./aiTaskQueue";
 
 const REQUEST_ID_HEADER = "x-request-id";
 const STRICT_JSON_HINT =
@@ -124,11 +129,15 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
   next(err);
 });
 
-// Auth, OAuth and Documents API
+// Auth, OAuth, Documents, Upload API
 app.use(passport.initialize());
 app.use("/api/auth", authRouter);
 app.use("/api/auth", oauthRouter);
 app.use("/api/documents", documentsRouter);
+app.use("/api/upload", uploadRouter);
+
+// Serve uploaded files in dev mode
+app.use("/uploads", express.static("public/uploads"));
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -227,6 +236,91 @@ app.post("/api/ai/agent", createRateLimitMiddleware(limiter), async (req, res) =
   });
 
   sendError(res, 502, "AI_AGENT_FAILED", "AI agent failed after retries", { attempts: errors });
+});
+
+// ── Async AI Task Queue Endpoints ───────────────────────────────────────────
+// Submit a long-running AI task to the queue (returns immediately with taskId)
+app.post("/api/ai/agent/async", createRateLimitMiddleware(limiter), async (req, res) => {
+  if (!config.deepseekApiKey) {
+    sendError(res, 500, "CONFIG_ERROR", "Missing DEEPSEEK_API_KEY env var");
+    return;
+  }
+
+  const parsedReq = agentRequestSchema.safeParse(req.body);
+  if (!parsedReq.success) {
+    sendError(res, 400, "INVALID_REQUEST", "Invalid request payload", parsedReq.error.flatten());
+    return;
+  }
+
+  try {
+    const taskId = await submitAiTask(parsedReq.data as AgentRunRequest, getRequestId(res));
+    res.json({ taskId, status: "queued" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    sendError(res, 503, "QUEUE_UNAVAILABLE", message);
+  }
+});
+
+// Poll for task status
+app.get("/api/ai/task/:taskId", (req, res) => {
+  const taskId = req.params["taskId"];
+  if (!taskId) {
+    sendError(res, 400, "INVALID_REQUEST", "Missing taskId");
+    return;
+  }
+
+  const progress = getTaskProgress(taskId);
+  if (!progress) {
+    sendError(res, 404, "TASK_NOT_FOUND", "Task not found or expired");
+    return;
+  }
+
+  res.json(progress);
+});
+
+// SSE stream for real-time task progress
+app.get("/api/ai/task/:taskId/stream", (req, res) => {
+  const taskId = req.params["taskId"];
+  if (!taskId) {
+    sendError(res, 400, "INVALID_REQUEST", "Missing taskId");
+    return;
+  }
+
+  const progress = getTaskProgress(taskId);
+  if (!progress) {
+    sendError(res, 404, "TASK_NOT_FOUND", "Task not found or expired");
+    return;
+  }
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  // Send current state immediately
+  writeSseEvent(res, "progress", progress);
+
+  // If already done, close immediately
+  if (progress.status === "completed" || progress.status === "failed") {
+    res.end();
+    return;
+  }
+
+  // Listen for updates
+  const onUpdate = (updated: AiTaskProgress) => {
+    writeSseEvent(res, "progress", updated);
+    if (updated.status === "completed" || updated.status === "failed") {
+      res.end();
+    }
+  };
+
+  taskEvents.on(`task:${taskId}`, onUpdate);
+
+  // Cleanup on client disconnect
+  req.on("close", () => {
+    taskEvents.off(`task:${taskId}`, onUpdate);
+  });
 });
 
 app.post("/api/ai/agent/stream", createRateLimitMiddleware(limiter), async (req, res) => {
@@ -332,10 +426,37 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   sendError(res, 500, "INTERNAL_ERROR", "Internal server error");
 });
 
-app.listen(config.port, () => {
+const httpServer = createServer(app);
+
+// Attach Hocuspocus WebSocket server for Y.js collaboration
+const hocuspocus = createCollaborationServer();
+const wss = new WebSocketServer({ noServer: true });
+
+httpServer.on("upgrade", (request, socket, head) => {
+  // Only handle /collaboration path for WebSocket
+  if (request.url?.startsWith("/collaboration")) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      (hocuspocus as any).handleConnection(ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+// Initialize async AI task queue (requires Redis)
+try {
+  initAiTaskQueue();
+} catch (err) {
+  logger.warn("ai_queue.init_skipped", {
+    reason: err instanceof Error ? err.message : String(err),
+  });
+}
+
+httpServer.listen(config.port, () => {
   logger.info("server.started", {
     url: `http://localhost:${config.port}`,
     env: config.nodeEnv,
-    rate_limit: `${config.rateLimit.maxRequests}/${config.rateLimit.windowMs}ms`
+    rate_limit: `${config.rateLimit.maxRequests}/${config.rateLimit.windowMs}ms`,
+    collaboration: "ws://localhost:" + config.port + "/collaboration"
   });
 });
